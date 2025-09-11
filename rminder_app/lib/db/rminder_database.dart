@@ -14,9 +14,11 @@ class RMinderDatabase {
     return _database!;
   }
 
-  Future<Database> _initDB(String filePath) async {
+  Future<Database> _initDB(String fileName) async {
+    final dbDir = await getDatabasesPath();
+    final fullPath = join(dbDir, fileName);
     return await openDatabase(
-      filePath,
+      fullPath,
       version: 2,
       onCreate: (db, version) async {
         await db.execute('''
@@ -126,11 +128,13 @@ class RMinderDatabase {
     }
     return result;
   }
-    Future<bool> hasTransactionsForCategory(int categoryId) async {
-      final db = await instance.database;
-      final result = await db.query('transactions', where: 'categoryId = ?', whereArgs: [categoryId]);
-      return result.isNotEmpty;
-    }
+
+  Future<bool> hasTransactionsForCategory(int categoryId) async {
+    final db = await instance.database;
+    final result = await db.query('transactions', where: 'categoryId = ?', whereArgs: [categoryId]);
+    return result.isNotEmpty;
+  }
+
   Future<void> _updateCategorySpent(int categoryId, Database db) async {
     // Sum all transactions for this category
     final result = await db.rawQuery(
