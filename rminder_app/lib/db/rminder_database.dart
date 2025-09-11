@@ -19,7 +19,7 @@ class RMinderDatabase {
     final fullPath = join(dbDir, fileName);
     return await openDatabase(
       fullPath,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -46,6 +46,16 @@ class RMinderDatabase {
             amount REAL NOT NULL
           )
         ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS liabilities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            balance REAL NOT NULL,
+            planned REAL NOT NULL,
+            budgetCategoryId INTEGER NOT NULL,
+            FOREIGN KEY (budgetCategoryId) REFERENCES categories (id)
+          )
+        ''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -54,6 +64,18 @@ class RMinderDatabase {
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               name TEXT NOT NULL,
               amount REAL NOT NULL
+            )
+          ''');
+        }
+        if (oldVersion < 3) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS liabilities (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              balance REAL NOT NULL,
+              planned REAL NOT NULL,
+              budgetCategoryId INTEGER NOT NULL,
+              FOREIGN KEY (budgetCategoryId) REFERENCES categories (id)
             )
           ''');
         }
@@ -176,5 +198,71 @@ class RMinderDatabase {
     if (db != null) {
       await db.close();
     }
+  }
+
+  // CRUD for Liability
+  Future<int> insertLiability(models.Liability liability) async {
+    final db = await instance.database;
+    return await db.insert('liabilities', liability.toMap());
+  }
+
+  Future<List<models.Liability>> getLiabilities() async {
+    final db = await instance.database;
+    final result = await db.query('liabilities');
+    return result.map((m) => models.Liability.fromMap(m)).toList();
+  }
+
+  Future<int> updateLiability(models.Liability liability) async {
+  final db = await instance.database;
+  final result = await db.update('liabilities', liability.toMap(), where: 'id = ?', whereArgs: [liability.id]);
+  // Keep the linked budget category's budget_limit aligned with planned
+  await db.update('categories', {'budget_limit': liability.planned},
+    where: 'id = ?', whereArgs: [liability.budgetCategoryId]);
+  return result;
+  }
+
+  Future<int> deleteLiability(int id) async {
+    final db = await instance.database;
+    return await db.delete('liabilities', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // Ensure a debt budget category exists for this liability name, returns category id
+  Future<int> ensureDebtCategory(String liabilityName, {double planned = 0}) async {
+    final db = await instance.database;
+    // Try find existing category with same name (or a prefixed naming convention)
+    final existing = await db.query('categories', where: 'name = ?', whereArgs: [liabilityName]);
+    if (existing.isNotEmpty) {
+      return existing.first['id'] as int;
+    }
+    final id = await db.insert('categories', {
+      'name': liabilityName,
+      'budget_limit': planned,
+      'spent': 0,
+    });
+    return id;
+  }
+
+  // Pay liability: deduct balance, log transaction in linked budget category, and update spent
+  Future<void> payLiability(models.Liability liability, double amount) async {
+    final db = await instance.database;
+    await db.transaction((txn) async {
+      final newBalance = (liability.balance - amount) < 0 ? 0 : (liability.balance - amount);
+      // Update liability balance
+      await txn.update('liabilities', {'balance': newBalance}, where: 'id = ?', whereArgs: [liability.id]);
+      // Log transaction
+      final t = models.Transaction(
+        categoryId: liability.budgetCategoryId,
+        amount: amount,
+        date: DateTime.now(),
+        note: 'Debt payment: ${liability.name}',
+      );
+  await txn.insert('transactions', t.toMap());
+      // Update category spent
+      final result = await txn.rawQuery(
+        'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?', [liability.budgetCategoryId],
+      );
+      final total = (result.first['total'] ?? 0) as num;
+      await txn.update('categories', {'spent': total}, where: 'id = ?', whereArgs: [liability.budgetCategoryId]);
+    });
   }
 }

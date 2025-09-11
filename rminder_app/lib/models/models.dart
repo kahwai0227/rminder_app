@@ -78,3 +78,33 @@ class IncomeSource {
     );
   }
 }
+
+class Liability {
+  final int? id;
+  final String name;
+  final double balance;
+  final double planned; // planned monthly payment
+  final int budgetCategoryId; // links to a BudgetCategory used for payments
+
+  Liability({this.id, required this.name, required this.balance, required this.planned, required this.budgetCategoryId});
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'balance': balance,
+      'planned': planned,
+      'budgetCategoryId': budgetCategoryId,
+    };
+  }
+
+  factory Liability.fromMap(Map<String, dynamic> map) {
+    return Liability(
+      id: map['id'] as int?,
+      name: map['name'] as String,
+      balance: (map['balance'] as num).toDouble(),
+      planned: (map['planned'] as num).toDouble(),
+      budgetCategoryId: map['budgetCategoryId'] as int,
+    );
+  }
+}

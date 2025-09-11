@@ -61,20 +61,12 @@ class _MainScreenState extends State<MainScreen> {
             if (budgetState != null) {
               final totalBudgeted = budgetState.categories.fold(0.0, (s, c) => s + c.budgetLimit);
               final totalIncome = budgetState.totalIncome;
-              if (totalIncome == 0 || totalBudgeted != totalIncome) {
-                await showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Budget Not Allocated'),
-                    content: const Text(
-                      'You must allocate your entire income to budget categories before accessing other pages.',
-                    ),
-                    actions: [
-                      TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
-                    ],
-                  ),
+              final remaining = totalIncome - totalBudgeted;
+              if (remaining > 0) {
+                ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('₹${remaining.toStringAsFixed(2)} of income is not allocated to any budget.')),
                 );
-                return;
               }
             }
           }
@@ -1345,6 +1337,8 @@ class ReportingPage extends StatefulWidget {
 class _ReportingPageState extends State<ReportingPage> {
   List<models.BudgetCategory> categories = [];
   List<models.Transaction> transactions = [];
+  List<models.Liability> liabilities = [];
+  DateTime selectedMonth = DateTime.now();
 
   @override
   void initState() {
@@ -1356,23 +1350,35 @@ class _ReportingPageState extends State<ReportingPage> {
     try {
       final cats = await RMinderDatabase.instance.getCategories();
       final txns = await RMinderDatabase.instance.getTransactions();
+      final liabs = await RMinderDatabase.instance.getLiabilities();
       setState(() {
         categories = cats;
         transactions = txns;
+        liabilities = liabs;
       });
     } catch (e, st) {
       logError(e, st);
     }
   }
 
+  bool _isSameMonth(DateTime a, DateTime b) => a.year == b.year && a.month == b.month;
+
   MonthlySummary getMonthlySummary() {
+    // Compute per-category spending for the selected month
+    final Map<int, double> spentByCategoryThisMonth = {};
+    for (final txn in transactions) {
+      if (_isSameMonth(txn.date, selectedMonth)) {
+        spentByCategoryThisMonth.update(txn.categoryId, (v) => v + txn.amount, ifAbsent: () => txn.amount);
+      }
+    }
     double totalSpent = 0;
     double totalLimit = 0;
     List<CategoryBreakdown> breakdown = [];
     for (final cat in categories) {
-      totalSpent += cat.spent;
+      final spent = spentByCategoryThisMonth[cat.id!] ?? 0;
+      totalSpent += spent;
       totalLimit += cat.budgetLimit;
-      breakdown.add(CategoryBreakdown(name: cat.name, spent: cat.spent, limit: cat.budgetLimit));
+      breakdown.add(CategoryBreakdown(name: cat.name, spent: spent, limit: cat.budgetLimit));
     }
     return MonthlySummary(
       totalSpent: totalSpent,
@@ -1385,13 +1391,14 @@ class _ReportingPageState extends State<ReportingPage> {
   @override
   Widget build(BuildContext context) {
     final summary = getMonthlySummary();
+    final monthLabel = '${_monthName(selectedMonth.month)} ${selectedMonth.year}';
     return Scaffold(
       appBar: AppBar(title: const Text('Reporting')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: SingleChildScrollView(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Monthly Summary', style: Theme.of(context).textTheme.headlineSmall),
+            Text('Monthly Summary ($monthLabel)', style: Theme.of(context).textTheme.headlineSmall),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(12.0),
@@ -1435,11 +1442,59 @@ class _ReportingPageState extends State<ReportingPage> {
                       },
                     ),
                   ]),
+            const SizedBox(height: 16),
+            if (liabilities.isNotEmpty) ...[
+              Text('Debt Payments', style: Theme.of(context).textTheme.titleMedium),
+              ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: liabilities.length,
+                itemBuilder: (context, index) {
+                  final liab = liabilities[index];
+                  final paid = _paidThisMonthFor(liab);
+                  final delta = paid - liab.planned;
+                  return Card(
+                    child: ListTile(
+                      title: Text(liab.name),
+                      subtitle: Text('Planned: ₹${liab.planned.toStringAsFixed(2)} | Paid: ₹${paid.toStringAsFixed(2)}'),
+                      trailing: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        const Text('Δ vs Plan'),
+                        Text(
+                          '₹${delta.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            color: delta >= 0 ? Colors.green : Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ]),
+                    ),
+                  );
+                },
+              ),
+            ],
           ]),
         ),
       ),
     );
   }
+
+  double _paidThisMonthFor(models.Liability liab) {
+    double total = 0;
+    for (final t in transactions) {
+      if (t.categoryId == liab.budgetCategoryId && _isSameMonth(t.date, selectedMonth)) {
+        total += t.amount;
+      }
+    }
+    return total;
+  }
+}
+
+String _monthName(int m) {
+  const names = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  return names[m - 1];
 }
 
 class IncomeDeclarationPage extends StatefulWidget {
@@ -1536,18 +1591,27 @@ class LiabilitiesPage extends StatefulWidget {
 }
 
 class _LiabilitiesPageState extends State<LiabilitiesPage> {
-  late List<Map<String, dynamic>> liabilitiesList;
+  List<models.Liability> liabilitiesList = [];
 
   @override
   void initState() {
     super.initState();
-    liabilitiesList = List<Map<String, dynamic>>.from(widget.liabilities);
+    _loadLiabilities();
+  }
+
+  Future<void> _loadLiabilities() async {
+    try {
+      final list = await RMinderDatabase.instance.getLiabilities();
+      setState(() => liabilitiesList = list);
+    } catch (e, st) {
+      logError(e, st);
+    }
   }
 
   void _addOrEditLiability({int? index}) {
-    final nameController = TextEditingController(text: index != null ? widget.liabilities[index]['name'] : '');
-    final amountController =
-        TextEditingController(text: index != null ? widget.liabilities[index]['amount'].toString() : '');
+    final nameController = TextEditingController(text: index != null ? liabilitiesList[index].name : '');
+    final balanceController = TextEditingController(text: index != null ? liabilitiesList[index].balance.toStringAsFixed(0) : '');
+    final plannedController = TextEditingController(text: index != null ? liabilitiesList[index].planned.toStringAsFixed(0) : '');
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1558,47 +1622,54 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
               TextField(
                 controller: nameController,
                 decoration: const InputDecoration(labelText: 'Liability Name'),
-                maxLength: 15,
-                onChanged: (_) => setState(() {}),
+                maxLength: 20,
               ),
-              if (nameController.text.length >= 15)
-                const Padding(
-                  padding: EdgeInsets.only(left: 4.0),
-                  child: Text('Maximum characters reached',
-                      style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.bold)),
-                ),
+              TextField(
+                controller: balanceController,
+                decoration: const InputDecoration(labelText: 'Current Balance'),
+                keyboardType: TextInputType.number,
+              ),
+              TextField(
+                controller: plannedController,
+                decoration: const InputDecoration(labelText: 'Planned Monthly Payment'),
+                keyboardType: TextInputType.number,
+              ),
             ]);
           }),
-          TextField(
-            controller: amountController,
-            decoration: const InputDecoration(labelText: 'Amount'),
-            keyboardType: TextInputType.number,
-          ),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () {
               final name = nameController.text.trim();
-              final amount = double.tryParse(amountController.text.trim()) ?? 0;
-              if (name.isEmpty) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(const SnackBar(content: Text('Name cannot be empty.')));
+              final balance = double.tryParse(balanceController.text.trim()) ?? 0;
+              final planned = double.tryParse(plannedController.text.trim()) ?? 0;
+              if (name.isEmpty || balance < 0 || planned < 0) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter valid values.')));
                 return;
               }
-              if (amount <= 0) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(const SnackBar(content: Text('Amount must be greater than 0.')));
-                return;
-              }
-              setState(() {
+              () async {
                 if (index == null) {
-                  liabilitiesList.add({'name': name, 'amount': amount});
+                  // ensure a budget category exists and set planned as its budget limit
+                  final catId = await RMinderDatabase.instance.ensureDebtCategory(name, planned: planned);
+                  await RMinderDatabase.instance.insertLiability(
+                    models.Liability(name: name, balance: balance, planned: planned, budgetCategoryId: catId),
+                  );
                 } else {
-                  liabilitiesList[index] = {'name': name, 'amount': amount};
+                  final liab = liabilitiesList[index];
+                  await RMinderDatabase.instance.updateLiability(
+                    models.Liability(
+                      id: liab.id,
+                      name: name,
+                      balance: balance,
+                      planned: planned,
+                      budgetCategoryId: liab.budgetCategoryId,
+                    ),
+                  );
                 }
-              });
-              Navigator.of(context).pop();
+                await _loadLiabilities();
+                if (mounted) Navigator.of(context).pop();
+              }();
             },
             child: Text(index == null ? 'Add' : 'Save'),
           ),
@@ -1608,7 +1679,11 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
   }
 
   void _removeLiability(int index) {
-    setState(() => liabilitiesList.removeAt(index));
+    final liab = liabilitiesList[index];
+    () async {
+      await RMinderDatabase.instance.deleteLiability(liab.id!);
+      await _loadLiabilities();
+    }();
   }
 
   @override
@@ -1630,12 +1705,48 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
                 : ListView.builder(
                     itemCount: liabilitiesList.length,
                     itemBuilder: (context, index) {
-                      final item = liabilitiesList[index];
+                      final liab = liabilitiesList[index];
                       return Card(
                         child: ListTile(
-                          title: Text(item['name']),
-                          subtitle: Text('Amount: ₹${(item['amount'] as num).toStringAsFixed(2)}'),
+                          title: Text(liab.name),
+                          subtitle: Text('Balance: ₹${liab.balance.toStringAsFixed(2)} | Planned: ₹${liab.planned.toStringAsFixed(2)}'),
                           trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                            TextButton.icon(
+                              icon: const Icon(Icons.payment),
+                              label: const Text('Pay'),
+                              onPressed: () {
+                                final controller = TextEditingController(text: liab.planned.toStringAsFixed(0));
+                                showDialog(
+                                  context: context,
+                                  builder: (_) => AlertDialog(
+                                    title: Text('Pay ${liab.name}'),
+                                    content: TextField(
+                                      controller: controller,
+                                      decoration: const InputDecoration(labelText: 'Amount'),
+                                      keyboardType: TextInputType.number,
+                                    ),
+                                    actions: [
+                                      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                                      ElevatedButton(
+                                        onPressed: () {
+                                          final amt = double.tryParse(controller.text.trim()) ?? 0;
+                                          if (amt <= 0) {
+                                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid amount.')));
+                                            return;
+                                          }
+                                          () async {
+                                            await RMinderDatabase.instance.payLiability(liab, amt);
+                                            await _loadLiabilities();
+                                            if (mounted) Navigator.pop(context);
+                                          }();
+                                        },
+                                        child: const Text('Confirm'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
                             IconButton(
                               icon: const Icon(Icons.edit, color: Colors.blue),
                               tooltip: 'Edit',
