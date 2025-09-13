@@ -1,6 +1,6 @@
 # 📱 RMinder – Local-First Budgeting & Debt Freedom App
 
-RMinder is a **privacy-first personal finance app** designed to help users **budget smarter and get out of debt faster** — completely offline.  
+RMinder is a **privacy-first personal finance mobile app** designed to help users **budget smarter and get out of debt faster** — completely offline.  
 No ads. No subscriptions. No data collection. Just a simple and powerful budgeting tool that puts users back in control of their money.
 
 ---
