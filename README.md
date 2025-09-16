@@ -39,6 +39,10 @@ flutter pub get
 flutter run
 ```
 
+### Overview
+
+| Dashboard | Add Transaction | Debt Tracker |
+|----------|----------------|--------------|
+
 ### Collaboration
 I'm looking for developer feedback! Please download the MVP, try it out, and let me know what you think by opening an issue or joining the discussion board
-https://github.com/kahwai0227/rminder_app/releases/download/v1.0.0/app-release.apk
