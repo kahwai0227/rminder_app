@@ -62,6 +62,25 @@ Here’s what RMinder looks like:
   <br/>
   <em>Liability page – manage your debt</em>
 </p>  
-
+<table>
+  <tr>
+    <td align="center">
+      <img src="screenshots/budget_page.png" alt="Budget Screen" width="200"/><br/>
+      <sub><b>Budget page – plan your budget</b></sub>
+    </td>
+    <td align="center">
+      <img src="screenshots/transaction_page.png" alt="Add Transaction" width="200"/><br/>
+      <sub><b>Transaction page – track your expenses</b></sub>
+    </td>
+    <td align="center">
+      <img src="screenshots/report_page.png" alt="Reporting" width="200"/><br/>
+      <sub><b>Report page – monitor your progress</b></sub>
+    </td>
+    <td align="center">
+      <img src="screenshots/liabilities_page.png" alt="Debt Tracking" width="200"/><br/>
+      <sub><b>Liability page – manage your debt</b></sub>
+    </td>
+  </tr>
+</table>
 ## Collaboration
 I'm looking for developer feedback! Please download the MVP, try it out, and let me know what you think by opening an issue or joining the discussion board
