@@ -42,17 +42,26 @@ flutter run
 ## 📱 App Interface
 Here’s what RMinder looks like:  
 
-![Budget](screenshots/budget_page.png)  
-*Budget page – plan your budget*  
-
-![Transaction](screenshots/transaction_page.png)  
-*Transaction page – track your expenses*  
-
-![Report](screenshots/report_page.png)  
-*Report page – check your progress*
-
-![Liability](screenshots/liabilities_page.png)  
-*Liability page – manage your debt*
+<p align="center">
+  <img src="screenshots/budget_page.png" alt="Budget Page" width="300"/>
+  <br/>
+  <em>Budget page – plan your budget</em>
+</p>
+<p align="center">
+  <img src="screenshots/transaction_page.png" alt="Transaction Page" width="300"/>
+  <br/>
+  <em>Transaction page – track your expenses</em>
+</p>
+<p align="center">
+  <img src="screenshots/report_page.png" alt="Report Page" width="300"/>
+  <br/>
+  <em>Report page – monitor your progress</em>
+</p>
+<p align="center">
+  <img src="screenshots/liabilities_page.png" alt="Liability Page" width="300"/>
+  <br/>
+  <em>Liability page – manage your debt</em>
+</p>  
 
 ## Collaboration
 I'm looking for developer feedback! Please download the MVP, try it out, and let me know what you think by opening an issue or joining the discussion board
