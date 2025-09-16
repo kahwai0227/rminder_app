@@ -19,7 +19,7 @@ class RMinderDatabase {
     final fullPath = join(dbDir, fileName);
     return await openDatabase(
       fullPath,
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -75,6 +75,17 @@ class RMinderDatabase {
             action TEXT NOT NULL
           )
         ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS sinking_funds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            target_amount REAL NOT NULL,
+            balance REAL NOT NULL,
+            monthly_contribution REAL NOT NULL,
+            budgetCategoryId INTEGER,
+            FOREIGN KEY (budgetCategoryId) REFERENCES categories (id)
+          )
+        ''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -121,6 +132,19 @@ class RMinderDatabase {
             )
           ''');
         }
+        if (oldVersion < 6) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS sinking_funds (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              target_amount REAL NOT NULL,
+              balance REAL NOT NULL,
+              monthly_contribution REAL NOT NULL,
+              budgetCategoryId INTEGER,
+              FOREIGN KEY (budgetCategoryId) REFERENCES categories (id)
+            )
+          ''');
+        }
       },
     );
   }
@@ -160,6 +184,8 @@ class RMinderDatabase {
       insertedId = await txnDb.insert('transactions', txn.toMap());
       // If this category is linked to a liability, reduce its balance by txn.amount
       await _adjustLiabilityBalanceForCategory(txnDb, txn.categoryId, -txn.amount);
+      // If this category is linked to a sinking fund, increase its balance by txn.amount
+      await _adjustSinkingFundBalanceForCategory(txnDb, txn.categoryId, txn.amount);
       await _updateCategorySpent(txn.categoryId, txnDb);
     });
     return insertedId;
@@ -195,13 +221,16 @@ class RMinderDatabase {
           // Same category; net change is new - old
           final delta = txn.amount - prevAmount; // positive means increased spend
           await _adjustLiabilityBalanceForCategory(txnDb, txn.categoryId, -delta);
+          await _adjustSinkingFundBalanceForCategory(txnDb, txn.categoryId, delta);
           await _updateCategorySpent(txn.categoryId, txnDb);
         } else {
           // Different categories; revert old, apply new
           await _adjustLiabilityBalanceForCategory(txnDb, prevCategoryId, prevAmount);
+          await _adjustSinkingFundBalanceForCategory(txnDb, prevCategoryId, -prevAmount);
           await _updateCategorySpent(prevCategoryId, txnDb);
 
           await _adjustLiabilityBalanceForCategory(txnDb, txn.categoryId, -txn.amount);
+          await _adjustSinkingFundBalanceForCategory(txnDb, txn.categoryId, txn.amount);
           await _updateCategorySpent(txn.categoryId, txnDb);
         }
       } else {
@@ -229,6 +258,8 @@ class RMinderDatabase {
       if (categoryId != null && amount != null) {
         // Deleting a transaction should add back to liability balance if it was a payment
   await _adjustLiabilityBalanceForCategory(txnDb, categoryId, amount);
+        // And subtract from sinking fund balance if it was a contribution
+        await _adjustSinkingFundBalanceForCategory(txnDb, categoryId, -amount);
         await _updateCategorySpent(categoryId, txnDb);
       }
     });
@@ -281,6 +312,35 @@ class RMinderDatabase {
     double next = current + delta;
     if (next < 0) next = 0;
     await db.update('liabilities', {'balance': next}, where: 'id = ?', whereArgs: [liab['id']]);
+  }
+
+  // Helper: Adjust sinking fund balance by delta for a category if it maps to a sinking fund.
+  // delta > 0 increases balance (contribution). delta < 0 decreases balance (undo).
+  Future<void> _adjustSinkingFundBalanceForCategory(DatabaseExecutor db, int categoryId, double delta) async {
+    // Find the sinking fund linked to this category
+    final funds = await db.query('sinking_funds', where: 'budgetCategoryId = ?', whereArgs: [categoryId]);
+    Map<String, Object?>? fund;
+    if (funds.isNotEmpty) {
+      fund = funds.first;
+    } else {
+      // Fallback: try to auto-link by same name as category
+      final cats = await db.query('categories', columns: ['name'], where: 'id = ?', whereArgs: [categoryId]);
+      if (cats.isNotEmpty) {
+        final catName = cats.first['name'] as String;
+        final byName = await db.query('sinking_funds', where: 'name = ?', whereArgs: [catName]);
+        if (byName.length == 1) {
+          fund = byName.first;
+          await db.update('sinking_funds', {'budgetCategoryId': categoryId}, where: 'id = ?', whereArgs: [fund['id']]);
+        }
+      }
+    }
+    if (fund == null) return;
+    final current = (fund['balance'] as num).toDouble();
+    final target = (fund['target_amount'] as num).toDouble();
+    double next = current + delta;
+    if (next < 0) next = 0;
+    if (next > target) next = target;
+    await db.update('sinking_funds', {'balance': next}, where: 'id = ?', whereArgs: [fund['id']]);
   }
 
   Future<void> deleteTransactionsForCategory(int categoryId) async {
@@ -397,6 +457,104 @@ class RMinderDatabase {
       await txn.update('categories', {'spent': total}, where: 'id = ?', whereArgs: [liability.budgetCategoryId]);
     });
     return txId;
+  }
+
+  // CRUD for SinkingFund
+  Future<int> insertSinkingFund(models.SinkingFund fund) async {
+    final db = await instance.database;
+    return await db.insert('sinking_funds', fund.toMap());
+  }
+
+  Future<List<models.SinkingFund>> getSinkingFunds() async {
+    final db = await instance.database;
+    final rows = await db.query('sinking_funds');
+    return rows.map((m) => models.SinkingFund.fromMap(m)).toList();
+  }
+
+  Future<int> updateSinkingFund(models.SinkingFund fund) async {
+    final db = await instance.database;
+    final result = await db.update('sinking_funds', fund.toMap(), where: 'id = ?', whereArgs: [fund.id]);
+    // Keep the linked budget category's budget_limit aligned with monthly contribution if linked
+    if (fund.budgetCategoryId != null) {
+      await db.update('categories', {'budget_limit': fund.monthlyContribution}, where: 'id = ?', whereArgs: [fund.budgetCategoryId]);
+    }
+    return result;
+  }
+
+  Future<void> deleteSinkingFundCascade(int fundId) async {
+    final db = await instance.database;
+    await db.transaction((txn) async {
+      final funds = await txn.query('sinking_funds', where: 'id = ?', whereArgs: [fundId]);
+      if (funds.isEmpty) return;
+      final fund = funds.first;
+      final categoryId = fund['budgetCategoryId'] as int?;
+      if (categoryId != null) {
+        await txn.delete('transactions', where: 'categoryId = ?', whereArgs: [categoryId]);
+        await txn.delete('categories', where: 'id = ?', whereArgs: [categoryId]);
+      }
+      await txn.delete('sinking_funds', where: 'id = ?', whereArgs: [fundId]);
+    });
+  }
+
+  // Ensure a savings budget category exists for this fund name, returns category id
+  Future<int> ensureSavingsCategory(String fundName, {double monthly = 0}) async {
+    final db = await instance.database;
+    final existing = await db.query('categories', where: 'name = ?', whereArgs: [fundName]);
+    if (existing.isNotEmpty) {
+      return existing.first['id'] as int;
+    }
+    final id = await db.insert('categories', {
+      'name': fundName,
+      'budget_limit': monthly,
+      'spent': 0,
+    });
+    return id;
+  }
+
+  // Contribute to a sinking fund: increase balance, log transaction in linked budget category, and update spent.
+  Future<int> contributeToFund(models.SinkingFund fund, double amount) async {
+    final db = await instance.database;
+    int txId = -1;
+    await db.transaction((txn) async {
+      final newBalance = (fund.balance + amount);
+      // Update fund balance (clamped to target)
+      final target = fund.targetAmount;
+      final clamped = newBalance > target ? target : (newBalance < 0 ? 0 : newBalance);
+      await txn.update('sinking_funds', {'balance': clamped}, where: 'id = ?', whereArgs: [fund.id]);
+      // Log transaction
+      if (fund.budgetCategoryId != null) {
+        final t = models.Transaction(
+          categoryId: fund.budgetCategoryId!,
+          amount: amount,
+          date: DateTime.now(),
+        );
+        txId = await txn.insert('transactions', t.toMap());
+        // Update category spent
+        final result = await txn.rawQuery(
+          'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?', [fund.budgetCategoryId],
+        );
+        final total = (result.first['total'] ?? 0) as num;
+        await txn.update('categories', {'spent': total}, where: 'id = ?', whereArgs: [fund.budgetCategoryId]);
+      }
+    });
+    return txId;
+  }
+
+  // Sum contributions recorded for a fund for a given month
+  Future<double> sumContributedForFundInMonth(int fundId, DateTime month) async {
+    final db = await instance.database;
+    final start = DateTime(month.year, month.month, 1);
+    final end = DateTime(month.year, month.month + 1, 1);
+    final funds = await db.query('sinking_funds', columns: ['budgetCategoryId'], where: 'id = ?', whereArgs: [fundId]);
+    if (funds.isEmpty) return 0;
+    final catId = funds.first['budgetCategoryId'] as int?;
+    if (catId == null) return 0;
+    final result = await db.rawQuery(
+      'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ? AND date >= ? AND date < ?',
+      [catId, start.toIso8601String(), end.toIso8601String()],
+    );
+    final total = (result.first['total'] ?? 0) as num;
+    return total.toDouble();
   }
 
   // Record an extra payment line (meta) linked to a liability (and optionally a transaction)

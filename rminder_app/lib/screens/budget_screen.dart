@@ -15,6 +15,7 @@ class _BudgetPageState extends State<BudgetPage> {
   List<models.BudgetCategory> categories = [];
   List<models.IncomeSource> incomeSources = [];
   List<models.Liability> liabilities = [];
+  List<models.SinkingFund> sinkingFunds = [];
   final ScrollController _budgetScroll = ScrollController();
 
   double get totalIncome => incomeSources.fold(0.0, (s, i) => s + i.amount);
@@ -25,6 +26,7 @@ class _BudgetPageState extends State<BudgetPage> {
     _loadCategories();
     _loadIncomeSources();
     _loadLiabilities();
+    _loadSinkingFunds();
   }
 
   @override
@@ -55,6 +57,15 @@ class _BudgetPageState extends State<BudgetPage> {
     try {
       final list = await RMinderDatabase.instance.getLiabilities();
       setState(() => liabilities = list);
+    } catch (e, st) {
+      logError(e, st);
+    }
+  }
+
+  Future<void> _loadSinkingFunds() async {
+    try {
+      final list = await RMinderDatabase.instance.getSinkingFunds();
+      setState(() => sinkingFunds = list);
     } catch (e, st) {
       logError(e, st);
     }
@@ -445,8 +456,10 @@ class _BudgetPageState extends State<BudgetPage> {
                         ),
                       ),
                       const SizedBox(height: 6),
-                      ...categories
-                          .where((c) => !liabilities.any((l) => l.budgetCategoryId == c.id))
+            ...categories
+              .where((c) =>
+                !liabilities.any((l) => l.budgetCategoryId == c.id) &&
+                !sinkingFunds.any((f) => f.budgetCategoryId == c.id))
                           .map((category) => Card(
                                 child: ListTile(
                                   key: ValueKey(category.id),
@@ -525,7 +538,59 @@ class _BudgetPageState extends State<BudgetPage> {
                                     icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
                                     tooltip: 'Edit in Liabilities',
                                     onPressed: () {
+                                      // Liabilities tab index in main.dart: 3
                                       TabSwitcher.of(context)?.switchTo(3);
+                                    },
+                                  ),
+                                ]),
+                              ),
+                            )),
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.attach_money, size: 18, color: Theme.of(context).colorScheme.primary),
+                            const SizedBox(width: 6),
+                            Text('Savings', style: Theme.of(context).textTheme.titleMedium),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      if (sinkingFunds.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 6.0),
+                          child: Text('No savings funds added yet.'),
+                        )
+                      else
+                        ...sinkingFunds.map((fund) => Card(
+                              child: ListTile(
+                                key: ValueKey('fund-${fund.id}'),
+                                title: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      fund.name,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Theme.of(context).colorScheme.onSurface,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Monthly: ₹${fund.monthlyContribution.toStringAsFixed(2)}',
+                                      style: TextStyle(color: Theme.of(context).colorScheme.primary),
+                                    ),
+                                  ],
+                                ),
+                                trailing: Wrap(spacing: 4, children: [
+                                  IconButton(
+                                    icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
+                                    tooltip: 'Edit in Savings',
+                                    onPressed: () {
+                                      // Savings tab index in main.dart: 2
+                                      TabSwitcher.of(context)?.switchTo(2);
                                     },
                                   ),
                                 ]),

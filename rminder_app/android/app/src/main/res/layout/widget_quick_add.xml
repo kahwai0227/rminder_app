@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="#FFFFFF"
+    android:orientation="vertical"
+    android:padding="8dp">
+
+    <TextView
+        android:id="@+id/widget_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Quick Add"
+        android:textStyle="bold"
+    android:textSize="20sp" />
+
+    <!-- Category Row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingTop="6dp">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Category: "
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/txt_category"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textSize="13sp"
+            android:text="Select" />
+        <Button
+            android:id="@+id/btn_cat_select"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="▼" />
+    </LinearLayout>
+
+    <!-- Category List Panel (expandable: show first three categories) -->
+    <!-- Quick categories (always visible): first three categories -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingTop="4dp">
+        <Button android:id="@+id/btn_quick_cat_1" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="" />
+        <Button android:id="@+id/btn_quick_cat_2" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="" />
+        <Button android:id="@+id/btn_quick_cat_3" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="" />
+    </LinearLayout>
+
+    <!-- Category List Panel (expandable list) -->
+    <LinearLayout
+        android:id="@+id/cat_list_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:paddingTop="4dp">
+        <Button android:id="@+id/btn_cat_item_1" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" />
+        <Button android:id="@+id/btn_cat_item_2" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" />
+        <Button android:id="@+id/btn_cat_item_3" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" />
+        <Button android:id="@+id/btn_cat_item_4" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" />
+        <Button android:id="@+id/btn_cat_item_5" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" />
+        <Button android:id="@+id/btn_cat_item_6" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" />
+        <Button android:id="@+id/btn_cat_item_7" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" />
+        <Button android:id="@+id/btn_cat_item_8" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" />
+        <Button android:id="@+id/btn_cat_item_9" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" />
+        <Button android:id="@+id/btn_cat_item_10" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" />
+    </LinearLayout>
+
+    <!-- Amount Display -->
+    <TextView
+        android:id="@+id/txt_amount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="0.00"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:paddingTop="6dp"
+        android:gravity="end" />
+
+    <!-- Note removed: amount is digit-only with auto-decimal -->
+
+    <!-- Keypad Rows -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="6dp">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/btn_k1" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="1" />
+            <Button android:id="@+id/btn_k2" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="2" />
+            <Button android:id="@+id/btn_k3" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="3" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/btn_k4" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="4" />
+            <Button android:id="@+id/btn_k5" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="5" />
+            <Button android:id="@+id/btn_k6" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="6" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/btn_k7" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="7" />
+            <Button android:id="@+id/btn_k8" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="8" />
+            <Button android:id="@+id/btn_k9" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="9" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/btn_clear" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="C" />
+            <Button android:id="@+id/btn_k0" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="0" />
+            <Button android:id="@+id/btn_k00" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="00" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/btn_backspace" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="⌫" />
+            <Button android:id="@+id/btn_save" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="Save" />
+        </LinearLayout>
+    </LinearLayout>
+
+</LinearLayout>

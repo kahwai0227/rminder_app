@@ -16,6 +16,7 @@ class _ReportingPageState extends State<ReportingPage> {
   List<models.BudgetCategory> categories = [];
   List<models.Transaction> transactions = [];
   List<models.Liability> liabilities = [];
+  List<models.SinkingFund> sinkingFunds = [];
   List<models.IncomeSource> incomeSources = [];
   DateTime selectedMonth = DateTime.now();
   List<DateTime> _closedMonths = [];
@@ -41,12 +42,14 @@ class _ReportingPageState extends State<ReportingPage> {
       final cats = await RMinderDatabase.instance.getCategories();
       final txns = await RMinderDatabase.instance.getTransactions();
       final liabs = await RMinderDatabase.instance.getLiabilities();
+      final funds = await RMinderDatabase.instance.getSinkingFunds();
       final incomes = await RMinderDatabase.instance.getIncomeSources();
       final closed = await RMinderDatabase.instance.getClosedMonths();
       setState(() {
         categories = cats;
         transactions = txns;
         liabilities = liabs;
+        sinkingFunds = funds;
         incomeSources = incomes;
         _closedMonths = closed;
       });
@@ -65,10 +68,12 @@ class _ReportingPageState extends State<ReportingPage> {
 
   MonthlySummary getMonthlySummary() {
     final debtCategoryIds = liabilities.map((l) => l.budgetCategoryId).toSet();
+    final fundCategoryIds = sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
+    final excludedCategoryIds = {...debtCategoryIds, ...fundCategoryIds};
     final Map<int, double> spentByCategoryThisMonth = {};
     for (final txn in transactions) {
       if (_isSameMonth(txn.date, selectedMonth)) {
-        if (debtCategoryIds.contains(txn.categoryId)) continue;
+        if (excludedCategoryIds.contains(txn.categoryId)) continue;
         spentByCategoryThisMonth.update(txn.categoryId, (v) => v + txn.amount, ifAbsent: () => txn.amount);
       }
     }
@@ -76,7 +81,8 @@ class _ReportingPageState extends State<ReportingPage> {
     double totalLimit = 0;
     List<CategoryBreakdown> breakdown = [];
     for (final cat in categories) {
-      if (debtCategoryIds.contains(cat.id)) continue;
+      if (cat.id == null) continue;
+      if (excludedCategoryIds.contains(cat.id)) continue;
       final spent = spentByCategoryThisMonth[cat.id!] ?? 0;
       totalSpent += spent;
       totalLimit += cat.budgetLimit;
@@ -298,6 +304,59 @@ class _ReportingPageState extends State<ReportingPage> {
                   ),
                 ],
                 const SizedBox(height: 16),
+                if (sinkingFunds.isNotEmpty) ...[
+                  Text('Savings Contributions', style: Theme.of(context).textTheme.titleMedium),
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: sinkingFunds.length,
+                    itemBuilder: (context, index) {
+                      final fund = sinkingFunds[index];
+                      final contributed = _contributedThisMonthFor(fund);
+                      final delta = contributed - fund.monthlyContribution;
+                      final progress = fund.targetAmount <= 0
+                          ? 0.0
+                          : (fund.balance / fund.targetAmount).clamp(0.0, 1.0);
+                      return Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(child: Text(fund.name, style: const TextStyle(fontWeight: FontWeight.bold))),
+                                  const SizedBox(width: 8),
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      const Text('Δ vs Plan', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                      Text(
+                                        '₹${delta.toStringAsFixed(2)}',
+                                        style: TextStyle(
+                                          color: delta >= 0 ? Colors.green : Colors.red,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text('Monthly: ₹${fund.monthlyContribution.toStringAsFixed(2)} | Contributed: ₹${contributed.toStringAsFixed(2)}'),
+                              const SizedBox(height: 6),
+                              Text('Progress: ₹${fund.balance.toStringAsFixed(2)} / ₹${fund.targetAmount.toStringAsFixed(2)}',
+                                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                              const SizedBox(height: 6),
+                              LinearProgressIndicator(value: progress),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+                const SizedBox(height: 16),
                 if (liabilities.isNotEmpty) ...[
                   Text('Debt Payments', style: Theme.of(context).textTheme.titleMedium),
                   ListView.builder(
@@ -333,6 +392,17 @@ class _ReportingPageState extends State<ReportingPage> {
         ),
       ),
     );
+  }
+
+  double _contributedThisMonthFor(models.SinkingFund fund) {
+    if (fund.budgetCategoryId == null) return 0;
+    double total = 0;
+    for (final t in transactions) {
+      if (t.categoryId == fund.budgetCategoryId && _isSameMonth(t.date, selectedMonth)) {
+        total += t.amount;
+      }
+    }
+    return total;
   }
 
   Future<void> _closeMonthFlow() async {
@@ -388,14 +458,18 @@ class _ReportingPageState extends State<ReportingPage> {
     }
 
     final debtCategoryIds = liabilities.map((l) => l.budgetCategoryId).toSet();
+    final fundCategoryIds = sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
+    final excludedCategoryIds = {...debtCategoryIds, ...fundCategoryIds};
     final Map<int, double> spentByCategoryThisMonth = {};
     for (final txn in transactions) {
       if (_isSameMonth(txn.date, selectedMonth)) {
-        if (debtCategoryIds.contains(txn.categoryId)) continue;
+        if (excludedCategoryIds.contains(txn.categoryId)) continue;
         spentByCategoryThisMonth.update(txn.categoryId, (v) => v + txn.amount, ifAbsent: () => txn.amount);
       }
     }
-    final List<models.BudgetCategory> regularCats = categories.where((c) => !debtCategoryIds.contains(c.id)).toList();
+    final List<models.BudgetCategory> regularCats = categories
+        .where((c) => c.id != null && !excludedCategoryIds.contains(c.id))
+        .toList();
     final Map<models.BudgetCategory, double> leftoverByCat = {
       for (final c in regularCats)
         c: (c.budgetLimit - (spentByCategoryThisMonth[c.id] ?? 0)).clamp(0, double.infinity)

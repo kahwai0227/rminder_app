@@ -1,3 +1,42 @@
+class SinkingFund {
+  final int? id;
+  final String name;
+  final double targetAmount;
+  final double balance;
+  final double monthlyContribution;
+  final int? budgetCategoryId; // optional: link to a category for contributions
+
+  SinkingFund({
+    this.id,
+    required this.name,
+    required this.targetAmount,
+    required this.balance,
+    required this.monthlyContribution,
+    this.budgetCategoryId,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'target_amount': targetAmount,
+      'balance': balance,
+      'monthly_contribution': monthlyContribution,
+      'budgetCategoryId': budgetCategoryId,
+    };
+  }
+
+  factory SinkingFund.fromMap(Map<String, dynamic> map) {
+    return SinkingFund(
+      id: map['id'] as int?,
+      name: map['name'] as String,
+      targetAmount: (map['target_amount'] as num).toDouble(),
+      balance: (map['balance'] as num).toDouble(),
+      monthlyContribution: (map['monthly_contribution'] as num).toDouble(),
+      budgetCategoryId: map['budgetCategoryId'] as int?,
+    );
+  }
+}
 class BudgetCategory {
   final int? id;
   final String name;

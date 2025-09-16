@@ -14,6 +14,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
   List<models.Transaction> transactions = [];
   List<models.BudgetCategory> categories = [];
   List<models.Liability> liabilities = [];
+  List<models.SinkingFund> _sinkingFunds = [];
   bool _hideDebt = false;
   final ScrollController _txScroll = ScrollController();
   models.BudgetCategory? _filterCategory;
@@ -56,6 +57,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
       final cats = await RMinderDatabase.instance.getCategories();
       final txns = await RMinderDatabase.instance.getTransactions();
       final liabs = await RMinderDatabase.instance.getLiabilities();
+      final funds = await RMinderDatabase.instance.getSinkingFunds();
       final validCategoryIds = cats.map((c) => c.id).toSet();
       final orphaned = txns.where((t) => !validCategoryIds.contains(t.categoryId)).toList();
       for (final t in orphaned) {
@@ -66,6 +68,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
         categories = cats;
         transactions = txns.where((t) => validCategoryIds.contains(t.categoryId)).toList();
         liabilities = liabs;
+        _sinkingFunds = funds;
       });
     } catch (e, st) {
       logError(e, st);
@@ -777,10 +780,17 @@ class _TransactionsPageState extends State<TransactionsPage> {
                               }
                               final cat = catList.first;
                               final isDebt = liabilities.any((l) => l.budgetCategoryId == txn.categoryId);
+                              final isSaving = _sinkingFunds.any((f) => f.budgetCategoryId == txn.categoryId);
+                              var icon = Icons.shopping_bag;
+                              if (isDebt) {
+                                icon = Icons.savings;
+                              } else if (isSaving) {
+                                icon = Icons.attach_money;
+                              }
                               return Card(
                                 child: ListTile(
                                   leading: Icon(
-                                    isDebt ? Icons.savings : Icons.shopping_bag,
+                                    icon,
                                     color: Theme.of(context).colorScheme.primary,
                                   ),
                                   title: Text('${cat.name} - ₹${txn.amount.toStringAsFixed(2)}'),

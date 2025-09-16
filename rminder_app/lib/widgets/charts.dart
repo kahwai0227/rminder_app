@@ -26,11 +26,13 @@ class BudgetAllocationChart extends StatelessWidget {
   final List<CategoryBreakdown> breakdown;
   final ValueChanged<CategoryBreakdown>? onSliceTap;
   final double unallocatedAmount;
+  final bool compactLegend;
   const BudgetAllocationChart({
     super.key,
     required this.breakdown,
     this.onSliceTap,
     this.unallocatedAmount = 0,
+    this.compactLegend = true,
   });
 
   @override
@@ -110,7 +112,7 @@ class BudgetAllocationChart extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        _ChartLegend(entries: legendEntries),
+        _ChartLegend(entries: legendEntries, compact: compactLegend),
       ],
     );
   }
@@ -123,39 +125,69 @@ class _LegendEntry {
   const _LegendEntry({required this.label, required this.color, required this.percent});
 }
 
-class _ChartLegend extends StatelessWidget {
+class _ChartLegend extends StatefulWidget {
   final List<_LegendEntry> entries;
-  const _ChartLegend({required this.entries});
+  final bool compact;
+  const _ChartLegend({required this.entries, this.compact = true});
+
+  @override
+  State<_ChartLegend> createState() => _ChartLegendState();
+}
+
+class _ChartLegendState extends State<_ChartLegend> {
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
+    final entries = widget.entries;
     if (entries.isEmpty) return const SizedBox.shrink();
-    return Wrap(
-      spacing: 10,
-      runSpacing: 8,
-      children: entries.map((e) {
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.5)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(width: 10, height: 10, decoration: BoxDecoration(color: e.color, shape: BoxShape.circle)),
-              const SizedBox(width: 8),
-              Text(
-                e.label,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+
+    // Compact mode: show up to N entries and allow expand
+  const maxVisible = 5;
+    final showToggle = widget.compact && entries.length > maxVisible;
+    final visibleEntries = (widget.compact && !_expanded)
+        ? entries.take(maxVisible).toList()
+        : entries;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: visibleEntries.map((e) {
+            final label = e.label.length > 14 ? '${e.label.substring(0, 14)}…' : e.label;
+            final pctStr = e.percent < 0.5 ? '<1%' : '${e.percent.toStringAsFixed(0)}%';
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.3)),
               ),
-              const SizedBox(width: 6),
-              Text('${e.percent.toStringAsFixed(1)}%', style: const TextStyle(color: Colors.grey)),
-            ],
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(width: 8, height: 8, decoration: BoxDecoration(color: e.color, shape: BoxShape.circle)),
+                  const SizedBox(width: 6),
+                  Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                  const SizedBox(width: 4),
+                  Text(pctStr, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+        if (showToggle)
+          Padding(
+            padding: const EdgeInsets.only(top: 6.0),
+            child: TextButton(
+              style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), minimumSize: const Size(0, 0)),
+              onPressed: () => setState(() => _expanded = !_expanded),
+              child: Text(_expanded ? 'Show less' : 'Show all (${entries.length - maxVisible} more)'),
+            ),
           ),
-        );
-      }).toList(),
+      ],
     );
   }
 }
