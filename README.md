@@ -33,8 +33,8 @@ No ads. No subscriptions. No data collection. Just a simple and powerful budgeti
 
 ### Run Locally
 ```bash
-git clone https://github.com/yourusername/rminder.git
-cd rminder
+git clone https://github.com/kahwai0227/rminder_app.git
+cd rminder_app
 flutter pub get
 flutter run
 ```
@@ -61,6 +61,49 @@ Here’s what RMinder looks like:
     </td>
   </tr>
 </table>
+
+---
+
+## 🧭 Tutorial: Using the App
+
+RMinder follows a simple monthly flow. Here’s a quick hands-on guide.
+
+1) Set up your income
+- Go to the Budget tab → Add under Income.
+- Enter a name (e.g., Salary) and amount.
+- Tip: All amount fields are digit-only with auto-decimal. Typing 3465 becomes 34.65. Fields start at 0.00.
+
+2) Create budget categories
+- Budget tab → Add Budget.
+- Give it a name (e.g., Groceries, Rent).
+- Set the Monthly Limit using the slider or by typing. Values show two decimals (e.g., 91.37).
+- Save. Repeat for each category you need.
+
+3) Record transactions
+- Transactions tab → Add.
+- Pick a category, enter the amount, optionally a note, and choose a date.
+- Save. Category “Spent” updates instantly.
+- Edit or delete transactions later by tapping them in the list.
+
+4) Manage liabilities (debts)
+- Liabilities tab → Add Liability.
+- Enter Name, Current Balance, and Minimum Payment.
+- To make a payment, tap the payment icon on a liability and enter the amount. If you pay above the minimum, the extra is tracked as an extra payment.
+
+5) View reports
+- Reports tab shows:
+  - Income vs. Total Budgeted and Unallocated amount
+  - Spending by category: spent, remaining, and breakdowns
+  - Debt payments summary: minimum vs. paid and any over/under
+
+6) Month-end suggestions
+- In Reports, review leftovers (unspent amounts) by category.
+- Optionally carry over leftovers as extra available next month.
+- Adjust category limits for the new month as needed.
+
+Notes
+- Amount inputs are digit-only; the decimal is inserted automatically and always displays two places (0.00).
+- Long names/notes are capped with inline counters to keep the UI tidy.
 
 ## Collaboration
 I'm looking for developer feedback! Please download the MVP, try it out, and let me know what you think by opening an issue or joining the discussion board
