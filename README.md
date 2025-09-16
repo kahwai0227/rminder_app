@@ -7,12 +7,16 @@ No ads. No subscriptions. No data collection. Just a simple and powerful budgeti
 
 ## ✨ Features (MVP)
 
+
 - **📊 Zero-Based Budgeting** – Allocate every RM until no money is left unassigned.  
 - **💸 Quick Transaction Entry** – Record income and expenses easily, directly affecting budgets.  
 - **🏦 Debt & Liability Tracking** – Add car loans, student loans, credit cards, and see real-time payoff progress.  
 - **📈 Visual Reports** – Track spending vs. budget and monitor debt payoff with charts powered by `fl_chart`.  
 - **📅 Flexible Payday Support** – Start your budget on your payday, not just on the first of the month.  
 - **🔒 100% Offline** – All data is stored locally using SQLite. No internet required, no data collection.  
+- **🏠 Home Screen Widget** – Instantly add transactions from your device's home screen with a compact, digit-only keypad and quick category selection (Android).  
+- **🎨 Custom Launcher Icon** – Branded app icon for a professional look and easy recognition.  
+- **🧹 UI Space Optimization** – AppBar removed and SafeArea used for a cleaner, more spacious interface.  
 
 ---
 
@@ -38,6 +42,10 @@ cd rminder_app
 flutter pub get
 flutter run
 ```
+
+#### Optional: Try the Home Screen Widget (Android)
+- Long-press your home screen, add the "RMinder Quick Add" widget.
+- Enter transactions instantly with the digit-only keypad and quick category picker.
 
 ## 📱 App Interface
 Here’s what RMinder looks like:  
@@ -89,18 +97,28 @@ RMinder follows a simple monthly flow. Here’s a quick hands-on guide.
 - Save. Category “Spent” updates instantly.
 - Edit or delete transactions later by tapping them in the list.
 
-4) Manage liabilities (debts)
+4) Build your savings
+- Go to the Savings tab.
+- Tap **Add Savings**.
+- Enter a name (e.g., Emergency Fund, Vacation).
+- Set your savings goal amount.
+- Add an initial balance if you already have some saved.
+- Tap **Save**. Your savings goal will appear in the list.
+- To add or withdraw money, tap the savings entry and use the **Add** or **Withdraw** buttons. All changes are tracked and visible in the savings history.
+
+5) Manage liabilities (debts)
 - Liabilities tab → Add Liability.
 - Enter Name, Current Balance, and Minimum Payment.
 - To make a payment, tap the payment icon on a liability and enter the amount. If you pay above the minimum, the extra is tracked as an extra payment.
 
-5) View reports
+
+6) View reports
 - Reports tab shows:
   - Income vs. Total Budgeted and Unallocated amount
   - Spending by category: spent, remaining, and breakdowns
   - Debt payments summary: minimum vs. paid and any over/under
 
-6) Month-end suggestions
+7) Month-end suggestions
 - In Reports, review leftovers (unspent amounts) by category.
 - Optionally carry over leftovers as extra available next month.
 - Adjust category limits for the new month as needed.
