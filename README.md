@@ -39,10 +39,11 @@ flutter pub get
 flutter run
 ```
 
-### Overview
+## 📱 Screenshots
+![Budget](screenshots/budget_page.png)  
+![Transaction](screenshots/transaction_page.png)  
+![Report](screenshots/report_page.png) 
+![Liability](screenshots/liabilities_page.png) 
 
-| Dashboard | Add Transaction | Debt Tracker |
-|----------|----------------|--------------|
-
-### Collaboration
+## Collaboration
 I'm looking for developer feedback! Please download the MVP, try it out, and let me know what you think by opening an issue or joining the discussion board
