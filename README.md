@@ -41,46 +41,26 @@ flutter run
 
 ## 📱 App Interface
 Here’s what RMinder looks like:  
-
-<p align="center">
-  <img src="screenshots/budget_page.png" alt="Budget Page" width="300"/>
-  <br/>
-  <em>Budget page – plan your budget</em>
-</p>
-<p align="center">
-  <img src="screenshots/transaction_page.png" alt="Transaction Page" width="300"/>
-  <br/>
-  <em>Transaction page – track your expenses</em>
-</p>
-<p align="center">
-  <img src="screenshots/report_page.png" alt="Report Page" width="300"/>
-  <br/>
-  <em>Report page – monitor your progress</em>
-</p>
-<p align="center">
-  <img src="screenshots/liabilities_page.png" alt="Liability Page" width="300"/>
-  <br/>
-  <em>Liability page – manage your debt</em>
-</p>  
-<table>
+<table style="border: none;">
   <tr>
-    <td align="center">
+    <td align="center" style="border: none;">
       <img src="screenshots/budget_page.png" alt="Budget Screen" width="200"/><br/>
       <sub><b>Budget page – plan your budget</b></sub>
     </td>
-    <td align="center">
+    <td align="center" style="border: none;">
       <img src="screenshots/transaction_page.png" alt="Add Transaction" width="200"/><br/>
       <sub><b>Transaction page – track your expenses</b></sub>
     </td>
-    <td align="center">
+    <td align="center" style="border: none;">
       <img src="screenshots/report_page.png" alt="Reporting" width="200"/><br/>
       <sub><b>Report page – monitor your progress</b></sub>
     </td>
-    <td align="center">
+    <td align="center" style="border: none;">
       <img src="screenshots/liabilities_page.png" alt="Debt Tracking" width="200"/><br/>
       <sub><b>Liability page – manage your debt</b></sub>
     </td>
   </tr>
 </table>
+
 ## Collaboration
 I'm looking for developer feedback! Please download the MVP, try it out, and let me know what you think by opening an issue or joining the discussion board
