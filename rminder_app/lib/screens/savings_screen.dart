@@ -205,6 +205,59 @@ class _SavingsScreenState extends State<SavingsScreen> {
     );
   }
 
+  void _withdraw(int index) async {
+    final fund = _funds[index];
+    final ctrl = TextEditingController(text: '0.00');
+    final noteCtrl = TextEditingController(text: '');
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Spend from ${fund.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Available: \u20b9${fund.balance.toStringAsFixed(2)}'),
+            const SizedBox(height: 8),
+            TextField(
+              controller: ctrl,
+              decoration: const InputDecoration(labelText: 'Amount to spend'),
+              keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
+              inputFormatters: [CurrencyInputFormatter()],
+            ),
+            TextField(
+              controller: noteCtrl,
+              decoration: const InputDecoration(labelText: 'Note (optional)'),
+              maxLength: 40,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              final amt = double.tryParse(ctrl.text.trim().replaceAll(',', '')) ?? 0;
+              if (amt <= 0) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid amount.')));
+                return;
+              }
+              if (amt > fund.balance) {
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(const SnackBar(content: Text('Amount exceeds available balance.')));
+                return;
+              }
+              await RMinderDatabase.instance.spendFromFund(fund, amt, note: noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
+              await _loadFunds();
+              await _loadContribThisMonth();
+              if (mounted) Navigator.pop(context);
+            },
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -251,6 +304,11 @@ class _SavingsScreenState extends State<SavingsScreen> {
                                         tooltip: 'Contribute',
                                         icon: const Icon(Icons.add_card),
                                         onPressed: () => _contribute(index),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Spend',
+                                        icon: const Icon(Icons.remove_circle_outline, color: Colors.orange),
+                                        onPressed: () => _withdraw(index),
                                       ),
                                       IconButton(
                                         icon: const Icon(Icons.edit, color: Colors.blue),

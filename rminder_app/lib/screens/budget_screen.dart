@@ -134,8 +134,85 @@ class _BudgetPageState extends State<BudgetPage> {
   }
 
   Future<void> _deleteIncomeSource(int id) async {
-    await RMinderDatabase.instance.deleteIncomeSource(id);
-    await _loadIncomeSources();
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Income'),
+        content: const Text('Are you sure you want to delete this income source?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (shouldDelete == true) {
+      await RMinderDatabase.instance.deleteIncomeSource(id);
+      await _loadIncomeSources();
+    }
+  }
+
+  Future<void> _showEditIncomeSourceDialog(models.IncomeSource source) async {
+    final nameController = TextEditingController(text: source.name);
+    final amountController = TextEditingController(text: source.amount.toStringAsFixed(2));
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Income Source'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            StatefulBuilder(builder: (context, setState) {
+              return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(labelText: 'Income Name'),
+                  maxLength: 15,
+                  onChanged: (_) => setState(() {}),
+                ),
+                if (nameController.text.length >= 15)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 4.0),
+                    child: Text('Maximum characters reached',
+                        style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.bold)),
+                  ),
+              ]);
+            }),
+            TextField(
+              controller: amountController,
+              decoration: const InputDecoration(labelText: 'Amount'),
+              keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
+              inputFormatters: [
+                CurrencyInputFormatter(),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              final name = nameController.text.trim();
+              final amount = double.tryParse(amountController.text.trim()) ?? 0;
+              if (name.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Name cannot be empty.')));
+                return;
+              }
+              if (amount <= 0) {
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(const SnackBar(content: Text('Amount must be greater than 0.')));
+                return;
+              }
+              await RMinderDatabase.instance.updateIncomeSource(
+                models.IncomeSource(id: source.id, name: name, amount: amount),
+              );
+              await _loadIncomeSources();
+              if (mounted) Navigator.pop(context);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showAddCategoryDialog() async {
@@ -411,10 +488,16 @@ class _BudgetPageState extends State<BudgetPage> {
                                             style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
                                           ),
                                           subtitle: Text('Amount: ₹${src.amount.toStringAsFixed(2)}'),
-                                          trailing: IconButton(
-                                            icon: Icon(Icons.delete, color: Theme.of(context).colorScheme.error),
-                                            onPressed: () => _deleteIncomeSource(src.id!),
-                                          ),
+                                          trailing: Wrap(spacing: 4, children: [
+                                            IconButton(
+                                              icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
+                                              onPressed: () => _showEditIncomeSourceDialog(src),
+                                            ),
+                                            IconButton(
+                                              icon: Icon(Icons.delete, color: Theme.of(context).colorScheme.error),
+                                              onPressed: () => _deleteIncomeSource(src.id!),
+                                            ),
+                                          ]),
                                         ),
                                       ))
                                   .toList(),

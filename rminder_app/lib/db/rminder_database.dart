@@ -360,6 +360,17 @@ class RMinderDatabase {
     return result.map((map) => models.IncomeSource.fromMap(map)).toList();
   }
 
+  Future<int> updateIncomeSource(models.IncomeSource income) async {
+    final db = await instance.database;
+    if (income.id == null) return 0;
+    return await db.update(
+      'income_sources',
+      income.toMap(),
+      where: 'id = ?',
+      whereArgs: [income.id],
+    );
+  }
+
   Future<int> deleteIncomeSource(int id) async {
     final db = await instance.database;
     return await db.delete('income_sources', where: 'id = ?', whereArgs: [id]);
@@ -530,6 +541,37 @@ class RMinderDatabase {
         );
         txId = await txn.insert('transactions', t.toMap());
         // Update category spent
+        final result = await txn.rawQuery(
+          'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?', [fund.budgetCategoryId],
+        );
+        final total = (result.first['total'] ?? 0) as num;
+        await txn.update('categories', {'spent': total}, where: 'id = ?', whereArgs: [fund.budgetCategoryId]);
+      }
+    });
+    return txId;
+  }
+
+  // Spend from a sinking fund: decrease balance, log a negative transaction in the linked budget category, and update spent.
+  // Returns the created transaction id (or -1 if no transaction written).
+  Future<int> spendFromFund(models.SinkingFund fund, double amount, {String? note}) async {
+    final db = await instance.database;
+    int txId = -1;
+    await db.transaction((txn) async {
+      // Clamp withdrawal to available balance
+  final withdraw = (amount < 0 ? 0 : amount).toDouble();
+      final newBalance = fund.balance - withdraw;
+      final clamped = newBalance < 0 ? 0 : newBalance;
+      await txn.update('sinking_funds', {'balance': clamped}, where: 'id = ?', whereArgs: [fund.id]);
+      // Log transaction (negative amount) in linked category if present
+      if (fund.budgetCategoryId != null) {
+        final t = models.Transaction(
+          categoryId: fund.budgetCategoryId!,
+          amount: -withdraw,
+          date: DateTime.now(),
+          note: note ?? 'Fund withdrawal: ${fund.name}',
+        );
+        txId = await txn.insert('transactions', t.toMap());
+        // Update category spent to reflect new sum
         final result = await txn.rawQuery(
           'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?', [fund.budgetCategoryId],
         );

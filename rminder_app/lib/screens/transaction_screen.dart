@@ -25,6 +25,13 @@ class _TransactionsPageState extends State<TransactionsPage> {
   double? _filterMinAmount;
   double? _filterMaxAmount;
 
+  String _formatIsoDate(DateTime d) {
+    final y = d.year.toString().padLeft(4, '0');
+    final m = d.month.toString().padLeft(2, '0');
+    final da = d.day.toString().padLeft(2, '0');
+    return '$y-$m-$da';
+  }
+
   String _formatShortDate(DateTime d) {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     final day = d.day;
@@ -93,6 +100,127 @@ class _TransactionsPageState extends State<TransactionsPage> {
       if (_filterMaxAmount != null) byAmount = byAmount && txn.amount <= _filterMaxAmount!;
       return byCategory && byDebt && byDate && byAmount;
     }).toList();
+  }
+
+  bool _isSinkingFundCategory(int categoryId) =>
+      _sinkingFunds.any((f) => f.budgetCategoryId == categoryId);
+
+  (String display, bool isPositive) _signedAmountForDisplay(models.Transaction t) {
+    // Convention:
+    // - For non-sinking categories, show as expense (-) regardless of stored sign.
+    // - For sinking funds, show + for contributions (>=0), - for withdrawals (<0).
+    const symbol = '₹';
+    if (_isSinkingFundCategory(t.categoryId)) {
+      final isPos = t.amount >= 0;
+      final v = t.amount.abs().toStringAsFixed(2);
+      return ('${isPos ? '+' : '-'}$symbol$v', isPos);
+    }
+    final v = t.amount.abs().toStringAsFixed(2);
+    return ('-$symbol$v', false);
+  }
+
+  List<Widget> _buildGroupedTransactionWidgets(BuildContext context) {
+    final txns = List<models.Transaction>.from(filteredTransactions);
+    // Sort by date (desc), then by id desc to keep recent first
+    txns.sort((a, b) {
+      final d = b.date.compareTo(a.date);
+      if (d != 0) return d;
+      // Null-safe id compare
+      final aid = a.id ?? -1;
+      final bid = b.id ?? -1;
+      return bid.compareTo(aid);
+    });
+
+    final List<Widget> children = [];
+    DateTime? currentDate;
+
+    for (final t in txns) {
+      final dateOnly = DateTime(t.date.year, t.date.month, t.date.day);
+      final cat = categories.firstWhere((c) => c.id == t.categoryId,
+          orElse: () => models.BudgetCategory(id: -1, name: 'Unknown', budgetLimit: 0, spent: 0));
+
+      if (currentDate == null || dateOnly != currentDate) {
+        // Close previous group with a divider (if any)
+        if (currentDate != null) {
+          children.add(const Divider(height: 24));
+        }
+        currentDate = dateOnly;
+        children.add(Text(
+          _formatIsoDate(dateOnly),
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        ));
+        children.add(const Divider());
+      }
+
+      final (displayAmount, isPositive) = _signedAmountForDisplay(t);
+      final amountColor = isPositive ? Colors.green : Colors.red;
+      final isDebt = liabilities.any((l) => l.budgetCategoryId == t.categoryId);
+      final isSaving = _isSinkingFundCategory(t.categoryId);
+      IconData leadingIcon = Icons.shopping_bag;
+      if (isDebt) {
+        leadingIcon = Icons.savings;
+      } else if (isSaving) {
+        leadingIcon = Icons.attach_money;
+      }
+
+      children.add(Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 12.0),
+                  child: Icon(
+                    leadingIcon,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    cat.name,
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                ),
+                Text(
+                  displayAmount,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyLarge
+                      ?.copyWith(color: amountColor, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Edit',
+                  icon: const Icon(Icons.edit, color: Colors.blue),
+                  onPressed: () => _showEditTransactionDialog(t),
+                ),
+                IconButton(
+                  tooltip: 'Delete',
+                  icon: const Icon(Icons.delete, color: Colors.red),
+                  onPressed: () => _confirmDeleteTransaction(t),
+                ),
+              ],
+            ),
+            if (t.note != null && t.note!.trim().isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(
+                'note: ${t.note!}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
+              ),
+            ],
+          ],
+        ),
+      ));
+    }
+
+    if (children.isNotEmpty) {
+      children.add(const Divider(height: 24));
+    }
+
+    return children;
   }
 
   Future<void> _showAddTransactionDialog() async {
@@ -768,61 +896,9 @@ class _TransactionsPageState extends State<TransactionsPage> {
                       : Scrollbar(
                           controller: _txScroll,
                           thumbVisibility: true,
-                          child: ListView.builder(
+                          child: ListView(
                             controller: _txScroll,
-                            itemCount: filteredTransactions.length,
-                            itemBuilder: (context, index) {
-                              final txn = filteredTransactions[index];
-                              final catList = categories.where((c) => c.id == txn.categoryId);
-                              if (catList.isEmpty) {
-                                logError('Transaction with missing category: ${txn.categoryId}');
-                                return const SizedBox.shrink();
-                              }
-                              final cat = catList.first;
-                              final isDebt = liabilities.any((l) => l.budgetCategoryId == txn.categoryId);
-                              final isSaving = _sinkingFunds.any((f) => f.budgetCategoryId == txn.categoryId);
-                              var icon = Icons.shopping_bag;
-                              if (isDebt) {
-                                icon = Icons.savings;
-                              } else if (isSaving) {
-                                icon = Icons.attach_money;
-                              }
-                              return Card(
-                                child: ListTile(
-                                  leading: Icon(
-                                    icon,
-                                    color: Theme.of(context).colorScheme.primary,
-                                  ),
-                                  title: Text('${cat.name} - ₹${txn.amount.toStringAsFixed(2)}'),
-                                  subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        () {
-                                          final dateStr = txn.date.toLocal().toString().split(' ')[0];
-                                          if (isDebt) return dateStr;
-                                          final note = txn.note;
-                                          if (note == null || note.trim().isEmpty) return dateStr;
-                                          return '$dateStr | $note';
-                                        }(),
-                                      ),
-                                    ],
-                                  ),
-                                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.edit, color: Colors.blue),
-                                      tooltip: 'Edit',
-                                      onPressed: () => _showEditTransactionDialog(txn),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete, color: Colors.red),
-                                      tooltip: 'Delete',
-                                      onPressed: () => _confirmDeleteTransaction(txn),
-                                    ),
-                                  ]),
-                                ),
-                              );
-                            },
+                            children: _buildGroupedTransactionWidgets(context),
                           ),
                         ),
             ),
