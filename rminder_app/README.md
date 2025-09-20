@@ -15,23 +15,23 @@ Here’s what RMinder looks like:
 <table>
   <tr>
 	<td align="center">
-	  <img src="screenshots/budget_page.png" alt="Budget" width="200"/><br/>
+	  <img src="../screenshots/budget_page.png" alt="Budget" width="200"/><br/>
 	  <sub><b>Budget page – plan your budget</b></sub>
 	</td>
 	<td align="center">
-	  <img src="screenshots/transaction_page.png" alt="Transaction" width="200"/><br/>
+	  <img src="../screenshots/transaction_page.png" alt="Transaction" width="200"/><br/>
 	  <sub><b>Transaction page – track your expenses</b></sub>
 	</td>
 	<td align="center">
-	  <img src="screenshots/savings_page.png" alt="Savings" width="200"/><br/>
+	  <img src="../screenshots/savings_page.png" alt="Savings" width="200"/><br/>
 	  <sub><b>Savings page – build your savings</b></sub>
 	</td>
 	<td align="center">
-	  <img src="screenshots/report_page.png" alt="Reporting" width="200"/><br/>
+	  <img src="../screenshots/report_page.png" alt="Reporting" width="200"/><br/>
 	  <sub><b>Report page – monitor your progress</b></sub>
 	</td>
 	<td align="center">
-	  <img src="screenshots/liabilities_page.png" alt="Debt" width="200"/><br/>
+	  <img src="../screenshots/liabilities_page.png" alt="Debt" width="200"/><br/>
 	  <sub><b>Liability page – manage your debt</b></sub>
 	</td>
   </tr>
