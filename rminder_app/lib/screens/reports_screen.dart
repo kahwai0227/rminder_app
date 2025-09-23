@@ -3,6 +3,7 @@ import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/logger.dart';
 import '../widgets/charts.dart';
+import 'tips_screen.dart';
 
 class ReportingPage extends StatefulWidget {
   const ReportingPage({Key? key}) : super(key: key);
@@ -150,6 +151,13 @@ class _ReportingPageState extends State<ReportingPage> {
             tooltip: 'Close Month',
             icon: const Icon(Icons.task_alt),
             onPressed: _closeMonthFlow,
+          ),
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) => const TipsScreen()),
+            ),
+            tooltip: 'Tips & Help',
           ),
         ],
       ),

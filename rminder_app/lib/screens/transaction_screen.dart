@@ -3,6 +3,7 @@ import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/logger.dart';
 import '../utils/currency_input_formatter.dart';
+import 'tips_screen.dart';
 
 class TransactionsPage extends StatefulWidget {
   const TransactionsPage({Key? key}) : super(key: key);
@@ -872,7 +873,18 @@ class _TransactionsPageState extends State<TransactionsPage> {
   Widget build(BuildContext context) {
     try {
       return Scaffold(
-        appBar: AppBar(title: const Text('Transactions')),
+        appBar: AppBar(
+          title: const Text('Transactions'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.help_outline),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (context) => const TipsScreen()),
+              ),
+              tooltip: 'Tips & Help',
+            ),
+          ],
+        ),
         body: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

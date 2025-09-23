@@ -11,6 +11,7 @@ import 'screens/liability_screen.dart';
 import 'screens/reports_screen.dart';
 import 'screens/transaction_screen.dart';
 import 'screens/savings_screen.dart';
+import 'screens/onboarding_screen.dart';
 // Removed flutter_svg import as the AppBar logo is no longer used
 
 @pragma('vm:entry-point')
@@ -247,8 +248,54 @@ class MyApp extends StatelessWidget {
       child: MaterialApp(
         title: 'RMinder',
         theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple)),
-        home: const MainScreen(),
+        home: const AppInitializer(),
+        routes: {
+          '/': (context) => const MainScreen(),
+          '/onboarding': (context) => const OnboardingScreen(),
+        },
       ),
+    );
+  }
+}
+
+class AppInitializer extends StatefulWidget {
+  const AppInitializer({super.key});
+
+  @override
+  State<AppInitializer> createState() => _AppInitializerState();
+}
+
+class _AppInitializerState extends State<AppInitializer> {
+  @override
+  void initState() {
+    super.initState();
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    await appState.initialize();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AppState>(
+      builder: (context, appState, child) {
+        if (!appState.isInitialized) {
+          // Show loading screen while initializing
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        if (!appState.isOnboardingCompleted) {
+          return const OnboardingScreen();
+        }
+
+        return const MainScreen();
+      },
     );
   }
 }

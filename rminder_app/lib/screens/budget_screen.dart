@@ -4,6 +4,7 @@ import '../models/models.dart' as models;
 import '../utils/logger.dart';
 import '../main.dart' show TabSwitcher; // reuse the inherited widget
 import '../utils/currency_input_formatter.dart';
+import 'tips_screen.dart';
 
 class BudgetPage extends StatefulWidget {
   const BudgetPage({Key? key}) : super(key: key);
@@ -452,7 +453,18 @@ class _BudgetPageState extends State<BudgetPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Budget')),
+      appBar: AppBar(
+        title: const Text('Budget'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) => const TipsScreen()),
+            ),
+            tooltip: 'Tips & Help',
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Scrollbar(
