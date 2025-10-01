@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/currency_input_formatter.dart';
+import '../main.dart' show buildGlobalAppBarActions;
+import '../main.dart' as app;
+import '../utils/ui_intents.dart';
 
 class SavingsScreen extends StatefulWidget {
   const SavingsScreen({Key? key}) : super(key: key);
@@ -114,6 +117,11 @@ class _SavingsScreenState extends State<SavingsScreen> {
                 );
               } else {
                 final existing = _funds[index];
+                // If fund has no linked category yet (legacy records), ensure one exists now
+                int? catId = existing.budgetCategoryId;
+                if (catId == null) {
+                  catId = await RMinderDatabase.instance.ensureSavingsCategory(name, monthly: monthly);
+                }
                 await RMinderDatabase.instance.updateSinkingFund(
                   models.SinkingFund(
                     id: existing.id,
@@ -121,11 +129,14 @@ class _SavingsScreenState extends State<SavingsScreen> {
                     targetAmount: target,
                     balance: bal > target ? target : bal,
                     monthlyContribution: monthly,
-                    budgetCategoryId: existing.budgetCategoryId,
+                    budgetCategoryId: catId,
                   ),
                 );
               }
               await _loadFunds();
+              // Also update widget categories cache to reflect rename/new fund's category
+              await app.syncWidgetCategories();
+              UiIntents.categoriesChangedEvent.value++;
               if (mounted) Navigator.pop(context);
             },
             child: Text(isEdit ? 'Save' : 'Add'),
@@ -261,7 +272,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Savings')),
+  appBar: AppBar(title: const Text('Savings'), actions: buildGlobalAppBarActions(context)),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(

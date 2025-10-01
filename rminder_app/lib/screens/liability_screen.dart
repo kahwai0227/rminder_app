@@ -4,6 +4,8 @@ import '../models/models.dart' as models;
 import '../utils/logger.dart';
 import '../utils/ui_intents.dart';
 import '../utils/currency_input_formatter.dart';
+import '../main.dart' show buildGlobalAppBarActions;
+import '../main.dart' as app;
 
 class LiabilitiesPage extends StatefulWidget {
   const LiabilitiesPage({Key? key}) : super(key: key);
@@ -131,17 +133,25 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
                   );
                 } else {
                   final liab = liabilitiesList[index];
+                  int catId = liab.budgetCategoryId;
+                  // Ensure category exists if missing (legacy)
+                  if (catId <= 0) {
+                    catId = await RMinderDatabase.instance.ensureDebtCategory(name, planned: planned);
+                  }
                   await RMinderDatabase.instance.updateLiability(
                     models.Liability(
                       id: liab.id,
                       name: name,
                       balance: balance,
                       planned: planned,
-                      budgetCategoryId: liab.budgetCategoryId,
+                      budgetCategoryId: catId,
                     ),
                   );
                 }
                 await _loadLiabilities();
+                // Keep widget categories in sync with changes/renames
+                await app.syncWidgetCategories();
+                UiIntents.categoriesChangedEvent.value++;
                 if (mounted) Navigator.of(context).pop();
               }();
             },
@@ -173,7 +183,9 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
     ).then((confirmed) async {
       if (confirmed == true) {
         await RMinderDatabase.instance.deleteLiabilityCascade(liab.id!);
-        await _loadLiabilities();
+  await _loadLiabilities();
+  await app.syncWidgetCategories();
+  UiIntents.categoriesChangedEvent.value++;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Liability "${liab.name}" and related data deleted.')),
@@ -186,7 +198,7 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Liabilities')),
+  appBar: AppBar(title: const Text('Liabilities'), actions: buildGlobalAppBarActions(context)),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

@@ -4,6 +4,7 @@ import '../models/models.dart' as models;
 import '../utils/logger.dart';
 import '../main.dart' show TabSwitcher; // reuse the inherited widget
 import '../utils/currency_input_formatter.dart';
+import '../main.dart' show buildGlobalAppBarActions;
 
 class BudgetPage extends StatefulWidget {
   const BudgetPage({Key? key}) : super(key: key);
@@ -452,7 +453,7 @@ class _BudgetPageState extends State<BudgetPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Budget')),
+  appBar: AppBar(title: const Text('Budget'), actions: buildGlobalAppBarActions(context)),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Scrollbar(

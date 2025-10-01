@@ -3,6 +3,8 @@ import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/logger.dart';
 import '../utils/currency_input_formatter.dart';
+import '../main.dart' show buildGlobalAppBarActions;
+import '../utils/ui_intents.dart';
 
 class TransactionsPage extends StatefulWidget {
   const TransactionsPage({Key? key}) : super(key: key);
@@ -51,11 +53,14 @@ class _TransactionsPageState extends State<TransactionsPage> {
   void initState() {
     super.initState();
     _loadCategoriesAndTransactions();
+    // Refresh when categories are added/renamed/deleted elsewhere (e.g., Liabilities/Savings)
+    UiIntents.categoriesChangedEvent.addListener(_loadCategoriesAndTransactions);
   }
 
   @override
   void dispose() {
     _txScroll.dispose();
+    UiIntents.categoriesChangedEvent.removeListener(_loadCategoriesAndTransactions);
     super.dispose();
   }
 
@@ -465,6 +470,11 @@ class _TransactionsPageState extends State<TransactionsPage> {
   }
 
   Future<void> _showFilterDialog() async {
+    // Ensure categories list is current (e.g., after fund/category renames)
+    try {
+      final latestCats = await RMinderDatabase.instance.getCategories();
+      if (mounted) setState(() => categories = latestCats);
+    } catch (_) {}
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) {
@@ -872,7 +882,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
   Widget build(BuildContext context) {
     try {
       return Scaffold(
-        appBar: AppBar(title: const Text('Transactions')),
+  appBar: AppBar(title: const Text('Transactions'), actions: buildGlobalAppBarActions(context)),
         body: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

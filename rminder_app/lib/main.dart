@@ -11,6 +11,8 @@ import 'screens/liability_screen.dart';
 import 'screens/reports_screen.dart';
 import 'screens/transaction_screen.dart';
 import 'screens/savings_screen.dart';
+import 'screens/user_guide.dart';
+import 'utils/ui_intents.dart';
 // Removed flutter_svg import as the AppBar logo is no longer used
 
 @pragma('vm:entry-point')
@@ -284,6 +286,26 @@ class _MainScreenState extends State<MainScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    // Show the user guide automatically on first launch.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeShowFirstRunGuide();
+    });
+  }
+
+  Future<void> _maybeShowFirstRunGuide() async {
+    try {
+      final shown = await RMinderDatabase.instance.getSetting('user_guide_shown');
+      if (shown != '1') {
+        if (!mounted) return;
+        await showUserGuide(context);
+        await RMinderDatabase.instance.setSetting('user_guide_shown', '1');
+      }
+    } catch (_) {}
+  }
+
+  @override
   Widget build(BuildContext context) {
     return TabSwitcher(
       switchTo: (i) => setState(() => _selectedIndex = i.clamp(0, _pages.length - 1)),
@@ -309,4 +331,43 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
+}
+
+/// Common app bar action that injects a global overflow menu with Close Period.
+/// Use this on pages that own their own AppBar to make the action available everywhere.
+List<Widget> buildGlobalAppBarActions(BuildContext context) {
+  return [
+    PopupMenuButton<String>(
+      tooltip: 'More',
+      itemBuilder: (ctx) => const [
+        PopupMenuItem(
+          value: 'close',
+          child: ListTile(
+            leading: Icon(Icons.task_alt),
+            title: Text('Close period'),
+          ),
+        ),
+        PopupMenuItem(
+          value: 'guide',
+          child: ListTile(
+            leading: Icon(Icons.help_outline),
+            title: Text('User guide'),
+          ),
+        ),
+      ],
+      onSelected: (value) async {
+        if (value == 'close') {
+          // Navigate to Reports tab (index 4) and then signal to open the Close flow.
+          TabSwitcher.of(context)?.switchTo(4);
+          // Defer signaling until after the tab switch layout completes.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            UiIntents.closePeriodEvent.value++;
+          });
+        } else if (value == 'guide') {
+          // Open the user guide dialog
+          await showUserGuide(context);
+        }
+      },
+    ),
+  ];
 }

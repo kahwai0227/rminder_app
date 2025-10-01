@@ -19,7 +19,7 @@ class RMinderDatabase {
     final fullPath = join(dbDir, fileName);
     return await openDatabase(
       fullPath,
-      version: 6,
+      version: 7,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -86,6 +86,12 @@ class RMinderDatabase {
             FOREIGN KEY (budgetCategoryId) REFERENCES categories (id)
           )
         ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+          )
+        ''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -142,6 +148,14 @@ class RMinderDatabase {
               monthly_contribution REAL NOT NULL,
               budgetCategoryId INTEGER,
               FOREIGN KEY (budgetCategoryId) REFERENCES categories (id)
+            )
+          ''');
+        }
+        if (oldVersion < 7) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL
             )
           ''');
         }
@@ -397,11 +411,22 @@ class RMinderDatabase {
 
   Future<int> updateLiability(models.Liability liability) async {
   final db = await instance.database;
-  final result = await db.update('liabilities', liability.toMap(), where: 'id = ?', whereArgs: [liability.id]);
-  // Keep the linked budget category's budget_limit aligned with planned
-  await db.update('categories', {'budget_limit': liability.planned},
-    where: 'id = ?', whereArgs: [liability.budgetCategoryId]);
-  return result;
+  return await db.transaction((txn) async {
+    final result = await txn.update('liabilities', liability.toMap(), where: 'id = ?', whereArgs: [liability.id]);
+    // Keep the linked budget category aligned with the liability:
+    // - name updated to match liability name (so Transactions filter shows new name)
+    // - budget_limit updated to liability.planned
+    await txn.update(
+      'categories',
+      {
+        'name': liability.name,
+        'budget_limit': liability.planned,
+      },
+      where: 'id = ?',
+      whereArgs: [liability.budgetCategoryId],
+    );
+    return result;
+  });
   }
 
   Future<int> deleteLiability(int id) async {
@@ -484,12 +509,25 @@ class RMinderDatabase {
 
   Future<int> updateSinkingFund(models.SinkingFund fund) async {
     final db = await instance.database;
-    final result = await db.update('sinking_funds', fund.toMap(), where: 'id = ?', whereArgs: [fund.id]);
-    // Keep the linked budget category's budget_limit aligned with monthly contribution if linked
-    if (fund.budgetCategoryId != null) {
-      await db.update('categories', {'budget_limit': fund.monthlyContribution}, where: 'id = ?', whereArgs: [fund.budgetCategoryId]);
-    }
-    return result;
+    // Perform updates in a single transaction to keep entities consistent
+    return await db.transaction((txn) async {
+      final result = await txn.update('sinking_funds', fund.toMap(), where: 'id = ?', whereArgs: [fund.id]);
+      // Keep the linked budget category aligned:
+      // - name matches the fund name (so filters show updated name)
+      // - budget_limit matches monthly contribution
+      if (fund.budgetCategoryId != null) {
+        await txn.update(
+          'categories',
+          {
+            'name': fund.name,
+            'budget_limit': fund.monthlyContribution,
+          },
+          where: 'id = ?',
+          whereArgs: [fund.budgetCategoryId],
+        );
+      }
+      return result;
+    });
   }
 
   Future<void> deleteSinkingFundCascade(int fundId) async {
@@ -648,8 +686,8 @@ class RMinderDatabase {
   // Record that a month has been closed
   Future<int> insertClosedMonth({required DateTime monthStart, required String action}) async {
     final db = await instance.database;
-    // Normalize to first day of month UTC-like string for consistency
-    final ms = DateTime(monthStart.year, monthStart.month, 1).toIso8601String();
+    // Store the provided period start day (respect user-defined reset day)
+    final ms = DateTime(monthStart.year, monthStart.month, monthStart.day).toIso8601String();
     final now = DateTime.now().toIso8601String();
     return await db.insert(
       'closed_months',
@@ -664,7 +702,7 @@ class RMinderDatabase {
 
   Future<bool> isMonthClosed(DateTime monthStart) async {
     final db = await instance.database;
-    final ms = DateTime(monthStart.year, monthStart.month, 1).toIso8601String();
+    final ms = DateTime(monthStart.year, monthStart.month, monthStart.day).toIso8601String();
     final rows = await db.query('closed_months', where: 'month_start = ?', whereArgs: [ms], limit: 1);
     return rows.isNotEmpty;
   }
@@ -674,9 +712,58 @@ class RMinderDatabase {
     final rows = await db.query('closed_months', columns: ['month_start']);
     return rows
         .map((r) => DateTime.parse((r['month_start'] as String)))
-        .map((d) => DateTime(d.year, d.month, 1))
         .toSet()
         .toList()
       ..sort((a, b) => a.compareTo(b));
+  }
+
+  static const String _activePeriodStartKey = 'active_period_start';
+
+  Future<DateTime?> getActivePeriodStart() async {
+    final s = await getSetting(_activePeriodStartKey);
+    if (s == null) return null;
+    try {
+      final d = DateTime.parse(s);
+      return d;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> setActivePeriodStart(DateTime start) async {
+    await setSetting(_activePeriodStartKey, start.toIso8601String());
+  }
+
+  // Settings helpers
+  Future<void> setSetting(String key, String value) async {
+    final db = await instance.database;
+    await db.insert(
+      'settings',
+      {'key': key, 'value': value},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getSetting(String key) async {
+    final db = await instance.database;
+    final rows = await db.query('settings', where: 'key = ?', whereArgs: [key], limit: 1);
+    if (rows.isEmpty) return null;
+    return rows.first['value'] as String;
+  }
+
+  static const String _resetDayKey = 'reset_day';
+
+  Future<void> setResetDay(int day) async {
+    final clamped = day.clamp(1, 28);
+    await setSetting(_resetDayKey, clamped.toString());
+  }
+
+  Future<int> getResetDay() async {
+    final v = await getSetting(_resetDayKey);
+    if (v == null) return 1;
+    final parsed = int.tryParse(v);
+    if (parsed == null) return 1;
+    if (parsed < 1 || parsed > 28) return 1;
+    return parsed;
   }
 }
