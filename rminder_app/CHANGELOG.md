@@ -2,6 +2,11 @@
 
 ## [1.2.0] - 2025-10-01
 
+## [1.2.1] - 2025-10-02
+
+### Fixed
+- Preserve current report period after update: initialize active period from the last closed period or reset-day inference, and correct bad "today" starts when earlier transactions exist.
+
 ### Added
 - Global User guide: accessible from the AppBar menu; auto-shown once on first launch.
 - Global Close period menu available on all screens.

@@ -721,13 +721,73 @@ class RMinderDatabase {
 
   Future<DateTime?> getActivePeriodStart() async {
     final s = await getSetting(_activePeriodStartKey);
-    if (s == null) return null;
-    try {
-      final d = DateTime.parse(s);
-      return d;
-    } catch (_) {
-      return null;
+    if (s != null) {
+      try {
+        final d0 = DateTime.parse(s);
+        // Normalize to date-only for comparisons
+        final d = DateTime(d0.year, d0.month, d0.day);
+        // Correction path: If the stored start equals "today" or is later than the
+        // inferred start based on reset day, and there is activity earlier than d
+        // in the same open period, backfill to the inferred start. This fixes an
+        // upgrade case where the start was incorrectly set to the update day.
+        try {
+          final today0 = DateTime.now();
+          final today = DateTime(today0.year, today0.month, today0.day);
+          final resetDay = await getResetDay();
+          final inferred = (today.day >= resetDay)
+              ? DateTime(today.year, today.month, resetDay)
+              : DateTime(today.month == 1 ? today.year - 1 : today.year,
+                  today.month == 1 ? 12 : today.month - 1, resetDay);
+          // Only attempt correction if stored start is after inferred (or equals today)
+          final shouldConsider = (d.isAfter(inferred)) || (d == today);
+          if (shouldConsider) {
+            // If there are earlier transactions in [inferred, d), then we likely need correction
+            final db = await instance.database;
+            final res = await db.rawQuery(
+              'SELECT COUNT(*) as c FROM transactions WHERE date >= ? AND date < ?',
+              [inferred.toIso8601String(), d.toIso8601String()],
+            );
+            final cnt = ((res.first['c']) as num?)?.toInt() ?? 0;
+            if (cnt > 0) {
+              await setActivePeriodStart(inferred);
+              return inferred;
+            }
+          }
+        } catch (_) {}
+        return d;
+      } catch (_) {
+        // fallthrough to compute default below
+      }
     }
+    // If not set (first run after upgrade), infer a sensible default.
+    // 1) If there are closed periods, start from the next period after the most recent close.
+    try {
+      final closed = await getClosedMonths();
+      if (closed.isNotEmpty) {
+        final last = closed.last; // sorted ascending in getClosedMonths
+        final next = DateTime(last.year, last.month + 1, last.day);
+        await setActivePeriodStart(next);
+        return next;
+      }
+    } catch (_) {
+      // ignore and fallback to reset-day-based inference
+    }
+    // 2) Otherwise, infer based on reset day so the open period covers the current span.
+    // This preserves the user's current period rather than resetting to "today".
+    final today = DateTime.now();
+    final resetDay = await getResetDay();
+    DateTime start;
+    if (today.day >= resetDay) {
+      start = DateTime(today.year, today.month, resetDay);
+    } else {
+      // previous month
+      final prevMonth = today.month == 1 ? 12 : (today.month - 1);
+      final prevYear = today.month == 1 ? (today.year - 1) : today.year;
+      start = DateTime(prevYear, prevMonth, resetDay);
+    }
+    // Persist the inferred value so future loads are consistent
+    await setActivePeriodStart(start);
+    return start;
   }
 
   Future<void> setActivePeriodStart(DateTime start) async {

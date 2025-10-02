@@ -166,6 +166,13 @@ void main() {
   // Sync categories for widget once app is up
   // Don't block startup; schedule async sync
   Future.microtask(syncWidgetCategories);
+  // Initialize the active period start if missing (post-upgrade safety)
+  Future.microtask(() async {
+    try {
+      // This call now infers and persists a sensible default if absent
+      await RMinderDatabase.instance.getActivePeriodStart();
+    } catch (_) {}
+  });
 }
 
 Future<void> _registerHomeWidgetCallbackWithRetry({int attempts = 3}) async {
