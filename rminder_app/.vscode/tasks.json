@@ -27,6 +27,20 @@
 				"$flutter"
 			],
 			"group": "build"
+		},
+		{
+			"label": "flutter build apk (release)",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"build",
+				"apk",
+				"--release"
+			],
+			"problemMatcher": [
+				"$dart"
+			],
+			"group": "build"
 		}
 	]
 }

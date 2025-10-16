@@ -19,7 +19,7 @@ class RMinderDatabase {
     final fullPath = join(dbDir, fileName);
     return await openDatabase(
       fullPath,
-      version: 7,
+      version: 9,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -53,6 +53,7 @@ class RMinderDatabase {
             balance REAL NOT NULL,
             planned REAL NOT NULL,
             budgetCategoryId INTEGER NOT NULL,
+            is_archived INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (budgetCategoryId) REFERENCES categories (id)
           )
         ''');
@@ -92,6 +93,17 @@ class RMinderDatabase {
             value TEXT NOT NULL
           )
         ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS budget_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_start TEXT NOT NULL,
+            category_id INTEGER NOT NULL,
+            category_name TEXT NOT NULL,
+            budget_limit REAL NOT NULL,
+            UNIQUE(period_start, category_id)
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_budget_snapshots_period ON budget_snapshots(period_start)');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -158,6 +170,23 @@ class RMinderDatabase {
               value TEXT NOT NULL
             )
           ''');
+        }
+        if (oldVersion < 8) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS budget_snapshots (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              period_start TEXT NOT NULL,
+              category_id INTEGER NOT NULL,
+              category_name TEXT NOT NULL,
+              budget_limit REAL NOT NULL,
+              UNIQUE(period_start, category_id)
+            )
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_budget_snapshots_period ON budget_snapshots(period_start)');
+        }
+        if (oldVersion < 9) {
+          // Add is_archived column to existing liabilities table
+          await db.execute('ALTER TABLE liabilities ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
         }
       },
     );
@@ -390,6 +419,67 @@ class RMinderDatabase {
     return await db.delete('income_sources', where: 'id = ?', whereArgs: [id]);
   }
 
+  // ---------------- Budget Snapshots ----------------
+  Future<void> saveBudgetSnapshotForPeriod(DateTime periodStart, List<models.BudgetCategory> categories) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    await db.transaction((txn) async {
+      for (final c in categories) {
+        if (c.id == null) continue;
+        await txn.insert(
+          'budget_snapshots',
+          {
+            'period_start': ps,
+            'category_id': c.id,
+            'category_name': c.name,
+            'budget_limit': c.budgetLimit,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  Future<List<models.BudgetSnapshot>> getBudgetSnapshotsFor(DateTime periodStart) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final rows = await db.query('budget_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+    return rows.map((m) => models.BudgetSnapshot.fromMap(m)).toList();
+  }
+
+  Future<Map<int, models.BudgetSnapshot>> getBudgetSnapshotMapFor(DateTime periodStart) async {
+    final snaps = await getBudgetSnapshotsFor(periodStart);
+    return {for (final s in snaps) s.categoryId: s};
+  }
+
+  // Backfill budget snapshots for all closed periods that don't have snapshots yet.
+  // Uses the current category budgets as a baseline (best effort for historical data).
+  Future<void> backfillBudgetSnapshots() async {
+    final db = await instance.database;
+    final closed = await getClosedMonths();
+    final categories = await getCategories();
+    for (final period in closed) {
+      final ps = DateTime(period.year, period.month, period.day).toIso8601String();
+      // Check if this period already has snapshots
+      final existing = await db.query('budget_snapshots', where: 'period_start = ?', whereArgs: [ps], limit: 1);
+      if (existing.isNotEmpty) continue; // already has snapshots
+      // Snapshot current categories for this period (best we can do for historical data)
+      for (final c in categories) {
+        if (c.id == null) continue;
+        await db.insert(
+          'budget_snapshots',
+          {
+            'period_start': ps,
+            'category_id': c.id,
+            'category_name': c.name,
+            'budget_limit': c.budgetLimit,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+    }
+  }
+
   Future close() async {
     final db = _database;
     if (db != null) {
@@ -404,6 +494,12 @@ class RMinderDatabase {
   }
 
   Future<List<models.Liability>> getLiabilities() async {
+    final db = await instance.database;
+    final result = await db.query('liabilities', where: 'is_archived = ?', whereArgs: [0]);
+    return result.map((m) => models.Liability.fromMap(m)).toList();
+  }
+
+  Future<List<models.Liability>> getAllLiabilities() async {
     final db = await instance.database;
     final result = await db.query('liabilities');
     return result.map((m) => models.Liability.fromMap(m)).toList();
@@ -684,16 +780,20 @@ class RMinderDatabase {
   }
 
   // Record that a month has been closed
-  Future<int> insertClosedMonth({required DateTime monthStart, required String action}) async {
+  Future<int> insertClosedMonth({
+    required DateTime monthStart, 
+    required String action,
+    DateTime? closedAt,
+  }) async {
     final db = await instance.database;
     // Store the provided period start day (respect user-defined reset day)
     final ms = DateTime(monthStart.year, monthStart.month, monthStart.day).toIso8601String();
-    final now = DateTime.now().toIso8601String();
+    final closedAtTime = (closedAt ?? DateTime.now()).toIso8601String();
     return await db.insert(
       'closed_months',
       {
         'month_start': ms,
-        'closed_at': now,
+        'closed_at': closedAtTime,
         'action': action,
       },
       conflictAlgorithm: ConflictAlgorithm.ignore,
@@ -717,6 +817,49 @@ class RMinderDatabase {
       ..sort((a, b) => a.compareTo(b));
   }
 
+  // Returns closed periods with both their start (date-only) and the actual close timestamp (full DateTime).
+  // Each map contains keys: 'start' (DateTime, date-only) and 'closedAt' (DateTime, with time).
+  Future<List<Map<String, DateTime>>> getClosedMonthsWithClosedAt() async {
+    final db = await instance.database;
+    final rows = await db.query('closed_months', columns: ['month_start', 'closed_at']);
+    final list = <Map<String, DateTime>>[];
+    for (final r in rows) {
+      try {
+        final ms0 = DateTime.parse((r['month_start'] as String));
+        final ca0 = DateTime.parse((r['closed_at'] as String));
+        final ms = DateTime(ms0.year, ms0.month, ms0.day);
+        // Keep full timestamp for closedAt to support same-day period transitions
+        list.add({'start': ms, 'closedAt': ca0});
+      } catch (_) {
+        // skip malformed rows
+      }
+    }
+    list.sort((a, b) => a['start']!.compareTo(b['start']!));
+    return list;
+  }
+
+  // Reopen a closed period by removing its closed_months entry and budget snapshots.
+  // Note: Does NOT remove carry-forward or debt payment transactions - those remain as regular transactions.
+  // Returns true if the period was reopened, false if it wasn't closed.
+  Future<bool> reopenClosedPeriod(DateTime periodStart) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    
+    return await db.transaction((txn) async {
+      // Check if the period is actually closed
+      final existing = await txn.query('closed_months', where: 'month_start = ?', whereArgs: [ps], limit: 1);
+      if (existing.isEmpty) return false; // Not closed, nothing to reopen
+      
+      // Delete the closed_months entry
+      await txn.delete('closed_months', where: 'month_start = ?', whereArgs: [ps]);
+      
+      // Delete budget snapshots for this period (user will see current budgets until they close again)
+      await txn.delete('budget_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+      
+      return true;
+    });
+  }
+
   static const String _activePeriodStartKey = 'active_period_start';
 
   Future<DateTime?> getActivePeriodStart() async {
@@ -734,10 +877,31 @@ class RMinderDatabase {
           final today0 = DateTime.now();
           final today = DateTime(today0.year, today0.month, today0.day);
           final resetDay = await getResetDay();
+          // Infer a reset-day based start as a potential correction target
           final inferred = (today.day >= resetDay)
               ? DateTime(today.year, today.month, resetDay)
-              : DateTime(today.month == 1 ? today.year - 1 : today.year,
-                  today.month == 1 ? 12 : today.month - 1, resetDay);
+              : DateTime(
+                  today.month == 1 ? today.year - 1 : today.year,
+                  today.month == 1 ? 12 : today.month - 1,
+                  resetDay,
+                );
+
+          // Do not allow correction to precede the most recent close. If a closed period exists,
+          // the active period must be at least the day after the last closedAt.
+          try {
+            final closed = await getClosedMonthsWithClosedAt();
+            if (closed.isNotEmpty) {
+              final last = closed.last; // sorted asc
+              final ca = last['closedAt']!;
+              final minActive = DateTime(ca.year, ca.month, ca.day).add(const Duration(days: 1));
+              if (inferred.isBefore(minActive)) {
+                // Clamp inferred forward to the minimum allowed active start
+                // so we never regress to earlier reset-day (e.g., 10 Oct) after a newer close exists.
+                await setActivePeriodStart(minActive);
+                return minActive;
+              }
+            }
+          } catch (_) {}
           // Only attempt correction if stored start is after inferred (or equals today)
           final shouldConsider = (d.isAfter(inferred)) || (d == today);
           if (shouldConsider) {
@@ -762,10 +926,14 @@ class RMinderDatabase {
     // If not set (first run after upgrade), infer a sensible default.
     // 1) If there are closed periods, start from the next period after the most recent close.
     try {
-      final closed = await getClosedMonths();
+      final closed = await getClosedMonthsWithClosedAt();
       if (closed.isNotEmpty) {
-        final last = closed.last; // sorted ascending in getClosedMonths
-        final next = DateTime(last.year, last.month + 1, last.day);
+        final last = closed.last; // sorted ascending
+        // Next active period begins the day after the closedAt date
+        // E.g., if closedAt = Oct 15, next period starts Oct 16
+        final ca = last['closedAt']!;
+        final closeDate = DateTime(ca.year, ca.month, ca.day);
+        final next = closeDate.add(const Duration(days: 1));
         await setActivePeriodStart(next);
         return next;
       }

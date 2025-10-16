@@ -13,14 +13,22 @@ class ReportingPage extends StatefulWidget {
 
 enum CloseAction { carryForward, payDebt }
 
-class _ReportingPageState extends State<ReportingPage> {
+class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+  
   List<models.BudgetCategory> categories = [];
   List<models.Transaction> transactions = [];
   List<models.Liability> liabilities = [];
   List<models.SinkingFund> sinkingFunds = [];
   List<models.IncomeSource> incomeSources = [];
   DateTime selectedMonth = DateTime.now();
+  DateTime? _activePeriodStart; // Track the actual active period start date
   List<DateTime> _closedMonths = [];
+  // Map of period start date -> actual closed-at date (both truncated to date)
+  final Map<DateTime, DateTime> _closedAtByStart = {};
+  // Snapshots of budgets per closed period: periodStart -> (categoryId -> snapshot)
+  final Map<DateTime, Map<int, models.BudgetSnapshot>> _snapshotsByPeriod = {};
   bool _isDetailsDialogOpen = false;
   final ScrollController _reportScroll = ScrollController();
   // Periods are anchored by last close; no static reset day.
@@ -30,6 +38,7 @@ class _ReportingPageState extends State<ReportingPage> {
     super.initState();
     _loadData();
     _loadActivePeriod();
+    _maybeBackfillSnapshots();
     // Listen for global Close Period events (triggered from other pages' menus)
     UiIntents.closePeriodEvent.addListener(_maybeHandleClosePeriodIntent);
   }
@@ -60,9 +69,17 @@ class _ReportingPageState extends State<ReportingPage> {
     return _closedMonths.any((d) => _sameDay(d, start));
   }
 
-  // Upper bound (exclusive) for the selected period: if closed, next start; else, now+1d.
+  // Upper bound (exclusive) for the selected period using actual close date for closed periods.
   DateTime _periodUpperBoundExclusive(DateTime start) {
     if (_isClosedPeriod(start)) {
+      final key = DateTime(start.year, start.month, start.day);
+      final ca = _closedAtByStart[key];
+      if (ca != null) {
+        // Period ends at midnight of the next day after close date (date-based, not timestamp)
+        // E.g., closed on Oct 16 -> period includes all of Oct 16, ends at Oct 17 00:00:00
+        final closeDate = DateTime(ca.year, ca.month, ca.day);
+        return closeDate.add(const Duration(days: 1));
+      }
       return DateTime(start.year, start.month + 1, start.day);
     }
     // Active period: include everything up to "now"
@@ -84,7 +101,17 @@ class _ReportingPageState extends State<ReportingPage> {
   String _formatPeriodRange(DateTime start) {
     final s = DateTime(start.year, start.month, start.day);
     final endExclusive = _periodUpperBoundExclusive(s);
-    final endInclusive = endExclusive.subtract(const Duration(days: 1));
+    // For closed periods, endExclusive is the exact timestamp when closed.
+    // For display, we want the date portion of that timestamp.
+    // For active periods, endExclusive is midnight of (today+1), so we subtract 1 day.
+    DateTime endInclusive;
+    if (_isClosedPeriod(s)) {
+      // Use the date of the close timestamp (e.g., Oct 16 7pm -> Oct 16)
+      endInclusive = DateTime(endExclusive.year, endExclusive.month, endExclusive.day);
+    } else {
+      // Active period: endExclusive is tomorrow's midnight, so subtract 1 day to get today
+      endInclusive = endExclusive.subtract(const Duration(days: 1));
+    }
     final withYear = s.year != endInclusive.year;
     return '${_formatDayMon(s, withYear: withYear)} – ${_formatDayMon(endInclusive, withYear: withYear)}';
   }
@@ -93,10 +120,17 @@ class _ReportingPageState extends State<ReportingPage> {
     try {
       final cats = await RMinderDatabase.instance.getCategories();
       final txns = await RMinderDatabase.instance.getTransactions();
-      final liabs = await RMinderDatabase.instance.getLiabilities();
+      final liabs = await RMinderDatabase.instance.getAllLiabilities(); // load all including archived
       final funds = await RMinderDatabase.instance.getSinkingFunds();
       final incomes = await RMinderDatabase.instance.getIncomeSources();
       final closed = await RMinderDatabase.instance.getClosedMonths();
+      final closedWith = await RMinderDatabase.instance.getClosedMonthsWithClosedAt();
+      // Preload snapshots for all closed periods
+      final Map<DateTime, Map<int, models.BudgetSnapshot>> snaps = {};
+      for (final p in closed) {
+        final m = await RMinderDatabase.instance.getBudgetSnapshotMapFor(p);
+        snaps[DateTime(p.year, p.month, p.day)] = m;
+      }
       if (!mounted) return;
       setState(() {
         categories = cats;
@@ -105,6 +139,16 @@ class _ReportingPageState extends State<ReportingPage> {
         sinkingFunds = funds;
         incomeSources = incomes;
         _closedMonths = closed;
+        _snapshotsByPeriod
+          ..clear()
+          ..addAll(snaps);
+        _closedAtByStart
+          ..clear()
+          ..addEntries(closedWith.map((m) {
+            final s = m['start']!;
+            final c = m['closedAt']!;
+            return MapEntry(DateTime(s.year, s.month, s.day), DateTime(c.year, c.month, c.day));
+          }));
       });
     } catch (e, st) {
       logError(e, st);
@@ -116,12 +160,33 @@ class _ReportingPageState extends State<ReportingPage> {
       final active = await RMinderDatabase.instance.getActivePeriodStart();
       if (!mounted) return;
       setState(() {
-        if (active != null) {
-          selectedMonth = active;
-        } else {
-          selectedMonth = DateTime.now();
+        _activePeriodStart = active ?? DateTime.now();
+        // Only set selectedMonth on first load (when it's still default DateTime.now())
+        // After that, preserve user's navigation
+        final now = DateTime.now();
+        final isDefaultValue = selectedMonth.year == now.year && 
+                                selectedMonth.month == now.month && 
+                                selectedMonth.day == now.day;
+        if (isDefaultValue) {
+          selectedMonth = _activePeriodStart!;
         }
       });
+    } catch (e, st) {
+      logError(e, st);
+    }
+  }
+
+  Future<void> _maybeBackfillSnapshots() async {
+    try {
+      // One-time backfill for existing closed periods: snapshot current budgets as baseline
+      final flag = await RMinderDatabase.instance.getSetting('snapshots_backfilled');
+      if (flag == 'true') return; // already done
+      await RMinderDatabase.instance.backfillBudgetSnapshots();
+      await RMinderDatabase.instance.setSetting('snapshots_backfilled', 'true');
+      // Reload snapshots after backfill
+      if (mounted) {
+        await _loadData();
+      }
     } catch (e, st) {
       logError(e, st);
     }
@@ -132,12 +197,31 @@ class _ReportingPageState extends State<ReportingPage> {
     final closedPeriods = _closedMonths.map((d) => DateTime(d.year, d.month, d.day)).toSet();
     final currentAnchor = DateTime(selectedMonth.year, selectedMonth.month, selectedMonth.day);
     final set = {...closedPeriods, currentAnchor};
+    // Always include the active period start so users can navigate back to it
+    if (_activePeriodStart != null) {
+      final activeDate = DateTime(_activePeriodStart!.year, _activePeriodStart!.month, _activePeriodStart!.day);
+      set.add(activeDate);
+    }
     final list = set.toList()..sort((a, b) => a.compareTo(b));
     return list;
   }
 
+  // Get liabilities appropriate for the selected period:
+  // - For active period: exclude archived
+  // - For closed periods: include all (to show historical data)
+  List<models.Liability> _liabilitiesForPeriod() {
+    final ps = _periodStartFor(selectedMonth);
+    final isClosed = _isClosedPeriod(ps);
+    if (isClosed) {
+      return liabilities; // show all including archived for historical accuracy
+    } else {
+      return liabilities.where((l) => !l.isArchived).toList(); // exclude archived from active period
+    }
+  }
+
   MonthlySummary getMonthlySummary() {
-    final debtCategoryIds = liabilities.map((l) => l.budgetCategoryId).toSet();
+    final periodLiabilities = _liabilitiesForPeriod();
+    final debtCategoryIds = periodLiabilities.map((l) => l.budgetCategoryId).toSet();
     final fundCategoryIds = sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
     final excludedCategoryIds = {...debtCategoryIds, ...fundCategoryIds};
     final Map<int, double> spentByCategoryThisMonth = {};
@@ -153,13 +237,30 @@ class _ReportingPageState extends State<ReportingPage> {
     double totalSpent = 0;
     double totalLimit = 0;
     List<CategoryBreakdown> breakdown = [];
-    for (final cat in categories) {
-      if (cat.id == null) continue;
-      if (excludedCategoryIds.contains(cat.id)) continue;
-      final spent = spentByCategoryThisMonth[cat.id!] ?? 0;
-      totalSpent += spent;
-      totalLimit += cat.budgetLimit;
-      breakdown.add(CategoryBreakdown(name: cat.name, spent: spent, limit: cat.budgetLimit, categoryId: cat.id));
+    final bool closed = _isClosedPeriod(periodStart);
+    final snapshots = closed ? _snapshotsByPeriod[DateTime(periodStart.year, periodStart.month, periodStart.day)] : null;
+
+    if (closed && snapshots != null && snapshots.isNotEmpty) {
+      // Build strictly from snapshots to reflect historical budgets accurately
+      final sorted = snapshots.values.toList()
+        ..sort((a, b) => a.categoryName.toLowerCase().compareTo(b.categoryName.toLowerCase()));
+      for (final snap in sorted) {
+        if (excludedCategoryIds.contains(snap.categoryId)) continue;
+        final spent = spentByCategoryThisMonth[snap.categoryId] ?? 0;
+        totalSpent += spent;
+        totalLimit += snap.budgetLimit;
+        breakdown.add(CategoryBreakdown(name: snap.categoryName, spent: spent, limit: snap.budgetLimit, categoryId: snap.categoryId));
+      }
+    } else {
+      // Fall back to current categories (open period or no snapshots found)
+      for (final cat in categories) {
+        if (cat.id == null) continue;
+        if (excludedCategoryIds.contains(cat.id)) continue;
+        final spent = spentByCategoryThisMonth[cat.id!] ?? 0;
+        totalSpent += spent;
+        totalLimit += cat.budgetLimit;
+        breakdown.add(CategoryBreakdown(name: cat.name, spent: spent, limit: cat.budgetLimit, categoryId: cat.id));
+      }
     }
     return MonthlySummary(
       totalSpent: totalSpent,
@@ -171,10 +272,12 @@ class _ReportingPageState extends State<ReportingPage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required by AutomaticKeepAliveClientMixin
     final summary = getMonthlySummary();
     final periods = _allowedPeriods();
     if (!periods.any((p) => _sameDay(p, selectedMonth))) {
-      selectedMonth = periods.isNotEmpty ? periods.last : DateTime.now();
+      // If selectedMonth is not in the allowed periods list, default to active period
+      selectedMonth = _activePeriodStart ?? (periods.isNotEmpty ? periods.last : DateTime.now());
     }
     final int currentIndex = periods.indexWhere((p) => _sameDay(p, selectedMonth));
     final bool canGoPrev = currentIndex > 0;
@@ -194,9 +297,6 @@ class _ReportingPageState extends State<ReportingPage> {
               onPressed: canGoPrev
                   ? () => setState(() {
                         selectedMonth = periods[currentIndex - 1];
-                        if (!_isClosedPeriod(selectedMonth)) {
-                          RMinderDatabase.instance.setActivePeriodStart(selectedMonth);
-                        }
                       })
                   : null,
             ),
@@ -222,9 +322,6 @@ class _ReportingPageState extends State<ReportingPage> {
               onPressed: canGoNext
                   ? () => setState(() {
                         selectedMonth = periods[currentIndex + 1];
-                        if (!_isClosedPeriod(selectedMonth)) {
-                          RMinderDatabase.instance.setActivePeriodStart(selectedMonth);
-                        }
                       })
                   : null,
             ),
@@ -234,18 +331,33 @@ class _ReportingPageState extends State<ReportingPage> {
         actions: [
           PopupMenuButton<String>(
             tooltip: 'More',
-            itemBuilder: (ctx) => [
-              const PopupMenuItem(
-                value: 'close',
-                child: ListTile(
-                  leading: Icon(Icons.task_alt),
-                  title: Text('Close period'),
-                ),
-              ),
-            ],
+            itemBuilder: (ctx) {
+              final periodStart = _periodStartFor(selectedMonth);
+              final isClosed = _isClosedPeriod(periodStart);
+              return [
+                if (!isClosed)
+                  const PopupMenuItem(
+                    value: 'close',
+                    child: ListTile(
+                      leading: Icon(Icons.task_alt),
+                      title: Text('Close period'),
+                    ),
+                  ),
+                if (isClosed)
+                  const PopupMenuItem(
+                    value: 'reopen',
+                    child: ListTile(
+                      leading: Icon(Icons.lock_open),
+                      title: Text('Reopen period'),
+                    ),
+                  ),
+              ];
+            },
             onSelected: (value) async {
               if (value == 'close') {
                 await _closeMonthFlow();
+              } else if (value == 'reopen') {
+                await _reopenPeriodFlow();
               }
             },
           ),
@@ -331,23 +443,40 @@ class _ReportingPageState extends State<ReportingPage> {
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(12.0),
-                    child: BudgetAllocationChart(
-                      breakdown: categories.map((c) {
-                        return CategoryBreakdown(
-                          name: c.name,
-                          spent: 0,
-                          limit: c.budgetLimit,
-                          categoryId: c.id,
-                        );
-                      }).toList(),
-                      unallocatedAmount: (() {
-                        final income = incomeSources.fold<double>(0, (s, i) => s + i.amount);
-                        final budgeted = categories.fold<double>(0, (s, c) => s + c.budgetLimit);
-                        final int cents = ((income - budgeted) * 100).round();
-                        return cents > 0 ? cents / 100.0 : 0.0;
-                      })(),
-                      onSliceTap: (data) => _showCategoryDetails(context, data),
-                    ),
+                    child: Builder(builder: (_) {
+                      final ps = _periodStartFor(selectedMonth);
+                      final isClosed = _isClosedPeriod(ps);
+                      final snaps = isClosed ? _snapshotsByPeriod[DateTime(ps.year, ps.month, ps.day)] : null;
+                      final useSnaps = snaps != null && snaps.isNotEmpty;
+            final breakdownList = useSnaps
+              ? snaps.values
+                              .map((s) => CategoryBreakdown(
+                                    name: s.categoryName,
+                                    spent: 0,
+                                    limit: s.budgetLimit,
+                                    categoryId: s.categoryId,
+                                  ))
+                              .toList()
+                          : categories
+                              .map((c) => CategoryBreakdown(
+                                    name: c.name,
+                                    spent: 0,
+                                    limit: c.budgetLimit,
+                                    categoryId: c.id,
+                                  ))
+                              .toList();
+                      final income = incomeSources.fold<double>(0, (s, i) => s + i.amount);
+            final budgeted = useSnaps
+              ? snaps.values.fold<double>(0, (s, x) => s + x.budgetLimit)
+                          : categories.fold<double>(0, (s, c) => s + c.budgetLimit);
+                      final int unallocCents = ((income - budgeted) * 100).round();
+                      final unalloc = unallocCents > 0 ? unallocCents / 100.0 : 0.0;
+                      return BudgetAllocationChart(
+                        breakdown: breakdownList,
+                        unallocatedAmount: unalloc,
+                        onSliceTap: (data) => _showCategoryDetails(context, data),
+                      );
+                    }),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -458,35 +587,42 @@ class _ReportingPageState extends State<ReportingPage> {
                   ),
                 ],
                 const SizedBox(height: 16),
-                if (liabilities.isNotEmpty) ...[
-                  Text('Debt Payments', style: Theme.of(context).textTheme.titleMedium),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: liabilities.length,
-                    itemBuilder: (context, index) {
-                      final liab = liabilities[index];
-                      final paid = _paidThisMonthFor(liab);
-                      final delta = paid - liab.planned;
-                      return Card(
-                        child: ListTile(
-                          title: Text(liab.name),
-                          subtitle: Text('Min: ₹${liab.planned.toStringAsFixed(2)} | Paid: ₹${paid.toStringAsFixed(2)}'),
-                          trailing: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                            const Text('Δ vs Plan'),
-                            Text(
-                              '₹${delta.toStringAsFixed(2)}',
-                              style: TextStyle(
-                                color: delta >= 0 ? Colors.green : Colors.red,
-                                fontWeight: FontWeight.bold,
-                              ),
+                Builder(builder: (_) {
+                  final periodLiabilities = _liabilitiesForPeriod();
+                  if (periodLiabilities.isEmpty) return const SizedBox.shrink();
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('Debt Payments', style: Theme.of(context).textTheme.titleMedium),
+                      ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: periodLiabilities.length,
+                        itemBuilder: (context, index) {
+                          final liab = periodLiabilities[index];
+                          final paid = _paidThisMonthFor(liab);
+                          final delta = paid - liab.planned;
+                          return Card(
+                            child: ListTile(
+                              title: Text(liab.name),
+                              subtitle: Text('Min: ₹${liab.planned.toStringAsFixed(2)} | Paid: ₹${paid.toStringAsFixed(2)}'),
+                              trailing: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                const Text('Δ vs Plan'),
+                                Text(
+                                  '₹${delta.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    color: delta >= 0 ? Colors.green : Colors.red,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ]),
                             ),
-                          ]),
-                        ),
-                      );
-                    },
-                  ),
-                ],
+                          );
+                        },
+                      ),
+                    ],
+                  );
+                }),
               ]),
             ),
           ),
@@ -532,8 +668,10 @@ class _ReportingPageState extends State<ReportingPage> {
       return;
     }
 
+    // Only check active (non-archived) liabilities for minimum payment requirement
+    final activeLiabilities = liabilities.where((l) => !l.isArchived).toList();
     final List<Map<String, dynamic>> minShortfalls = [];
-    for (final liab in liabilities) {
+    for (final liab in activeLiabilities) {
       final paid = _paidThisMonthFor(liab);
       final remaining = (liab.planned - paid);
       if (remaining > 0.01) {
@@ -563,12 +701,14 @@ class _ReportingPageState extends State<ReportingPage> {
       return;
     }
 
-    final debtCategoryIds = liabilities.map((l) => l.budgetCategoryId).toSet();
+  final debtCategoryIds = liabilities.map((l) => l.budgetCategoryId).toSet();
     final fundCategoryIds = sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
     final excludedCategoryIds = {...debtCategoryIds, ...fundCategoryIds};
     final Map<int, double> spentByCategoryThisMonth = {};
-    final periodStart = _periodStartFor(selectedMonth);
-    final periodEnd = DateTime(periodStart.year, periodStart.month + 1, periodStart.day);
+  final periodStart = _periodStartFor(selectedMonth);
+  // Closing the period today; include transactions up to end of today (exclusive boundary at tomorrow)
+  final today = DateTime.now();
+  final periodEnd = DateTime(today.year, today.month, today.day).add(const Duration(days: 1));
     for (final txn in transactions) {
       if (!txn.date.isBefore(periodStart) && txn.date.isBefore(periodEnd)) {
         if (excludedCategoryIds.contains(txn.categoryId)) continue;
@@ -590,7 +730,7 @@ class _ReportingPageState extends State<ReportingPage> {
     }
 
     CloseAction mode = CloseAction.carryForward;
-    models.Liability? selectedLiab = liabilities.isNotEmpty ? liabilities.first : null;
+    models.Liability? selectedLiab = activeLiabilities.isNotEmpty ? activeLiabilities.first : null;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -617,14 +757,14 @@ class _ReportingPageState extends State<ReportingPage> {
               RadioListTile<CloseAction>(
                 value: CloseAction.payDebt,
                 groupValue: mode,
-                onChanged: liabilities.isEmpty ? null : (v) => setLocal(() => mode = v ?? mode),
+                onChanged: activeLiabilities.isEmpty ? null : (v) => setLocal(() => mode = v ?? mode),
                 title: const Text('Use unspent to pay debt'),
-                subtitle: liabilities.isEmpty
+                subtitle: activeLiabilities.isEmpty
                     ? const Text('No liabilities added')
                     : DropdownButton<models.Liability>(
                         value: selectedLiab,
                         isExpanded: true,
-                        items: liabilities
+                        items: activeLiabilities
                             .map((l) => DropdownMenuItem(value: l, child: Text(l.name)))
                             .toList(),
                         onChanged: (l) => setLocal(() => selectedLiab = l),
@@ -643,29 +783,59 @@ class _ReportingPageState extends State<ReportingPage> {
     if (confirmed != true) return;
 
     try {
+      // When closing on Oct 17, we close the period up to Oct 16 (yesterday)
+      // and start a new period from Oct 17 (today)
+      final today = DateTime.now();
+      final todayDate = DateTime(today.year, today.month, today.day);
+      final yesterday = todayDate.subtract(const Duration(days: 1));
+      final nextStart = todayDate; // New period starts today
+      // Snapshot current budgets for this closing period so historical reports show the original limits
+      await RMinderDatabase.instance.saveBudgetSnapshotForPeriod(periodStart, categories);
+      
+      // Auto-archive liabilities that are paid off (balance <= 0)
+      for (final liab in activeLiabilities) {
+        if (liab.balance <= 0 && !liab.isArchived) {
+          await RMinderDatabase.instance.updateLiability(models.Liability(
+            id: liab.id,
+            name: liab.name,
+            balance: liab.balance,
+            planned: liab.planned,
+            budgetCategoryId: liab.budgetCategoryId,
+            isArchived: true,
+          ));
+        }
+      }
+      
       if (mode == CloseAction.carryForward) {
-        final nextStart = DateTime(periodStart.year, periodStart.month + 1, periodStart.day);
         for (final entry in leftoverByCat.entries) {
           final leftover = entry.value;
           if (leftover <= 0) continue;
           final cat = entry.key;
+          // Record carry-forward on yesterday (the last day of the closing period)
+          // This shows the unspent amount as used in the closed period report
+          final carryForwardDate = yesterday;
           await RMinderDatabase.instance.insertTransaction(models.Transaction(
             categoryId: cat.id!,
-            amount: -leftover,
-            date: nextStart,
-            note: 'Carry forward from ${_monthName(selectedMonth.month)} ${selectedMonth.year}',
+            amount: leftover,
+            date: carryForwardDate,
+            note: 'Carry forward to ${_monthName(nextStart.month)} ${nextStart.year}',
           ));
         }
         await RMinderDatabase.instance.insertClosedMonth(
           monthStart: periodStart,
           action: 'carryForward',
+          closedAt: yesterday, // Period ends yesterday, new period starts today
         );
+        // Update database BEFORE setState to ensure persistence before UI update
+        await RMinderDatabase.instance.setActivePeriodStart(nextStart);
         await _loadData();
         if (!mounted) return;
-        setState(() => selectedMonth = nextStart);
-        await RMinderDatabase.instance.setActivePeriodStart(nextStart);
+        setState(() {
+          selectedMonth = nextStart;
+          _activePeriodStart = nextStart;
+        });
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Carried forward unspent to next month.')));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Carried forward unspent to next period.')));
         }
       } else {
         final liab = selectedLiab;
@@ -675,24 +845,30 @@ class _ReportingPageState extends State<ReportingPage> {
           }
           return;
         }
-        final end = DateTime(periodStart.year, periodStart.month + 1, periodStart.day).subtract(const Duration(days: 1));
+        // Record payment on yesterday (the last day of the closing period)
+        // Closing on Oct 17 means the period ends Oct 16, so payment is dated Oct 16
+        final paymentDate = yesterday;
         await RMinderDatabase.instance.insertTransaction(models.Transaction(
           categoryId: liab.budgetCategoryId,
           amount: totalLeftover,
-          date: end,
-          note: 'Month close payment (${_monthName(selectedMonth.month)} ${selectedMonth.year}) - ${liab.name}',
+          date: paymentDate,
+          note: 'Period close payment (${_monthName(selectedMonth.month)} ${selectedMonth.year}) - ${liab.name}',
         ));
         await RMinderDatabase.instance.insertClosedMonth(
           monthStart: periodStart,
           action: 'payDebt',
+          closedAt: yesterday, // Period ends yesterday, new period starts today
         );
-        final nextStart = DateTime(periodStart.year, periodStart.month + 1, periodStart.day);
+        // Update database BEFORE setState to ensure persistence before UI update
+        await RMinderDatabase.instance.setActivePeriodStart(nextStart);
         await _loadData();
         if (!mounted) return;
-        setState(() => selectedMonth = nextStart);
-        await RMinderDatabase.instance.setActivePeriodStart(nextStart);
+        setState(() {
+          selectedMonth = nextStart;
+          _activePeriodStart = nextStart;
+        });
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Debt payment recorded; tracking advanced to next month.')));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Debt payment recorded; tracking advanced to next period.')));
         }
       }
     } catch (e, st) {
@@ -758,12 +934,89 @@ class _ReportingPageState extends State<ReportingPage> {
       );
       if (chosen != null && mounted) {
         setState(() => selectedMonth = chosen);
-        if (!_isClosedPeriod(chosen)) {
-          RMinderDatabase.instance.setActivePeriodStart(chosen);
-        }
       }
     } catch (e, st) {
       logError(e, st);
+    }
+  }
+
+  Future<void> _reopenPeriodFlow() async {
+    final periodStart = _periodStartFor(selectedMonth);
+    
+    // Confirm with user
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reopen Period?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Reopen ${_formatPeriodRange(periodStart)}?'),
+            const SizedBox(height: 12),
+            const Text(
+              'This will:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 6),
+            const Text('• Remove the closed status'),
+            const Text('• Delete budget snapshots (will use current budgets)'),
+            const Text('• Keep all transactions (carry-forward, debt payments, etc.)'),
+            const SizedBox(height: 12),
+            const Text(
+              'You can edit transactions and close the period again.',
+              style: TextStyle(fontSize: 12, color: Colors.orange),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reopen'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final success = await RMinderDatabase.instance.reopenClosedPeriod(periodStart);
+      if (!success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Period was not closed.')),
+          );
+        }
+        return;
+      }
+
+      // Reload data to reflect the reopened period
+      await _loadData();
+      
+      // Set this period as the active period
+      await RMinderDatabase.instance.setActivePeriodStart(periodStart);
+      
+      if (!mounted) return;
+      setState(() {
+        selectedMonth = periodStart;
+        _activePeriodStart = periodStart;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Reopened ${_formatPeriodRange(periodStart)}')),
+      );
+    } catch (e, st) {
+      logError(e, st);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to reopen period. Please try again.')),
+        );
+      }
     }
   }
 }

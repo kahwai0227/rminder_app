@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0] - 2025-10-16
+
+### Fixed
+- Active period persistence: prevent resets to earlier reset-day after closing; clamp active start to the day after the most recent closed period.
+- Correct active period display fallback in Reports so it prefers the true active period over the last closed period during data load.
+- Closed period end date: ensure the closed period ends on the intended close day and new period starts on the correct day.
+
+### Changed
+- Carry-forward and debt-payment posting align to the end of the closing period for accurate historical reports.
+
+### Internal
+- Database inference logic for active period hardened to avoid regressions across app restarts.
+
 ## [1.2.0] - 2025-10-01
 
 ## [1.2.1] - 2025-10-02
