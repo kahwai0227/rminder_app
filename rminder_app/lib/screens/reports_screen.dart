@@ -4,6 +4,7 @@ import '../models/models.dart' as models;
 import '../utils/logger.dart';
 import '../widgets/charts.dart';
 import '../utils/ui_intents.dart';
+import '../utils/currency_input_formatter.dart';
 
 class ReportingPage extends StatefulWidget {
   const ReportingPage({Key? key}) : super(key: key);
@@ -29,6 +30,8 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
   final Map<DateTime, DateTime> _closedAtByStart = {};
   // Snapshots of budgets per closed period: periodStart -> (categoryId -> snapshot)
   final Map<DateTime, Map<int, models.BudgetSnapshot>> _snapshotsByPeriod = {};
+  // Sum of income snapshots per closed period (periodStart -> total income)
+  final Map<DateTime, double> _incomeSumByPeriod = {};
   bool _isDetailsDialogOpen = false;
   final ScrollController _reportScroll = ScrollController();
   // Periods are anchored by last close; no static reset day.
@@ -39,6 +42,7 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
     _loadData();
     _loadActivePeriod();
     _maybeBackfillSnapshots();
+    _maybeBackfillIncomeSnapshots();
     // Listen for global Close Period events (triggered from other pages' menus)
     UiIntents.closePeriodEvent.addListener(_maybeHandleClosePeriodIntent);
   }
@@ -127,9 +131,13 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
       final closedWith = await RMinderDatabase.instance.getClosedMonthsWithClosedAt();
       // Preload snapshots for all closed periods
       final Map<DateTime, Map<int, models.BudgetSnapshot>> snaps = {};
+      final Map<DateTime, double> incomeSums = {};
       for (final p in closed) {
         final m = await RMinderDatabase.instance.getBudgetSnapshotMapFor(p);
         snaps[DateTime(p.year, p.month, p.day)] = m;
+        // Also load income snapshot sum for this closed period
+        final totalInc = await RMinderDatabase.instance.getIncomeSnapshotSumFor(p);
+        incomeSums[DateTime(p.year, p.month, p.day)] = totalInc;
       }
       if (!mounted) return;
       setState(() {
@@ -142,6 +150,9 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
         _snapshotsByPeriod
           ..clear()
           ..addAll(snaps);
+        _incomeSumByPeriod
+          ..clear()
+          ..addAll(incomeSums);
         _closedAtByStart
           ..clear()
           ..addEntries(closedWith.map((m) {
@@ -187,6 +198,18 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
       if (mounted) {
         await _loadData();
       }
+    } catch (e, st) {
+      logError(e, st);
+    }
+  }
+
+  Future<void> _maybeBackfillIncomeSnapshots() async {
+    try {
+      final flag = await RMinderDatabase.instance.getSetting('income_snapshots_backfilled');
+      if (flag == 'true') return;
+      await RMinderDatabase.instance.backfillIncomeSnapshots();
+      await RMinderDatabase.instance.setSetting('income_snapshots_backfilled', 'true');
+      // reload not strictly necessary here
     } catch (e, st) {
       logError(e, st);
     }
@@ -345,6 +368,22 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
                   ),
                 if (isClosed)
                   const PopupMenuItem(
+                    value: 'edit-budget',
+                    child: ListTile(
+                      leading: Icon(Icons.tune),
+                      title: Text('Edit period budget'),
+                    ),
+                  ),
+                if (isClosed)
+                  const PopupMenuItem(
+                    value: 'edit-income',
+                    child: ListTile(
+                      leading: Icon(Icons.edit),
+                      title: Text('Edit period income'),
+                    ),
+                  ),
+                if (isClosed)
+                  const PopupMenuItem(
                     value: 'reopen',
                     child: ListTile(
                       leading: Icon(Icons.lock_open),
@@ -356,6 +395,10 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
             onSelected: (value) async {
               if (value == 'close') {
                 await _closeMonthFlow();
+              } else if (value == 'edit-budget') {
+                await _editBudgetForPeriodFlow();
+              } else if (value == 'edit-income') {
+                await _editIncomeForPeriodFlow();
               } else if (value == 'reopen') {
                 await _reopenPeriodFlow();
               }
@@ -377,11 +420,62 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
                   child: Padding(
                     padding: const EdgeInsets.all(12.0),
                     child: Builder(builder: (_) {
-                      // Use cents to avoid floating-point rounding issues showing “overbudgeted by 0.00”.
-                      final totalIncome = incomeSources.fold<double>(0, (s, i) => s + i.amount);
-                      final totalBudgeted = categories.fold<double>(0, (s, c) => s + c.budgetLimit);
+                      // Compute Unallocated for the selected period, including extras beyond planned
+                      // Use cents to avoid floating-point rounding issues.
+                      final ps = _periodStartFor(selectedMonth);
+                      final pe = _periodUpperBoundExclusive(ps);
+                      final isClosed = _isClosedPeriod(ps);
+                      final snaps = isClosed ? _snapshotsByPeriod[DateTime(ps.year, ps.month, ps.day)] : null;
+
+            // Income: use snapshot sum for closed periods; current income for active
+            final double totalIncome = isClosed
+              ? (_incomeSumByPeriod[DateTime(ps.year, ps.month, ps.day)] ?? 0.0)
+              : incomeSources.fold<double>(0, (s, i) => s + i.amount);
+
+                      // Base budgeted: from snapshots when closed, otherwise current categories
+                      final double baseBudgeted = snaps != null && snaps.isNotEmpty
+                          ? snaps.values.fold<double>(0, (s, x) => s + x.budgetLimit)
+                          : categories.fold<double>(0, (s, c) => s + c.budgetLimit);
+
+                      // Identify debt and fund category IDs for this period
+                      final periodLiabs = _liabilitiesForPeriod();
+                      final Set<int> debtCatIds = periodLiabs.map((l) => l.budgetCategoryId).toSet();
+                      final Set<int> fundCatIds =
+                          sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
+
+                      // Planned totals for debts/funds (aligned with how baseBudgeted was computed)
+                      double plannedDebt = 0;
+                      double plannedFunds = 0;
+                      if (snaps != null && snaps.isNotEmpty) {
+                        for (final s in snaps.values) {
+                          if (debtCatIds.contains(s.categoryId)) plannedDebt += s.budgetLimit;
+                          if (fundCatIds.contains(s.categoryId)) plannedFunds += s.budgetLimit;
+                        }
+                      } else {
+                        for (final c in categories) {
+                          if (c.id == null) continue;
+                          if (debtCatIds.contains(c.id)) plannedDebt += c.budgetLimit;
+                          if (fundCatIds.contains(c.id)) plannedFunds += c.budgetLimit;
+                        }
+                      }
+
+                      // Actual payments/contributions in this period
+                      double paidDebt = 0;
+                      double contributedFunds = 0;
+                      for (final t in transactions) {
+                        if (!t.date.isBefore(ps) && t.date.isBefore(pe)) {
+                          if (debtCatIds.contains(t.categoryId)) paidDebt += t.amount;
+                          if (fundCatIds.contains(t.categoryId)) contributedFunds += t.amount; // withdrawals are negative
+                        }
+                      }
+
+                      // Extras beyond plan (only count net extra, not underpayments)
+                      final double extraDebt = paidDebt > plannedDebt ? (paidDebt - plannedDebt) : 0.0;
+                      final double extraFunds = contributedFunds > plannedFunds ? (contributedFunds - plannedFunds) : 0.0;
+                      final double effectiveBudgeted = baseBudgeted + extraDebt + extraFunds;
+
                       final int incomeCents = (totalIncome * 100).round();
-                      final int budgetCents = (totalBudgeted * 100).round();
+                      final int budgetCents = (effectiveBudgeted * 100).round();
                       final int unallocatedCents = incomeCents - budgetCents; // positive => unallocated
                       final hasIncome = incomeCents > 0;
                       final hasBudget = budgetCents > 0;
@@ -445,6 +539,7 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
                     padding: const EdgeInsets.all(12.0),
                     child: Builder(builder: (_) {
                       final ps = _periodStartFor(selectedMonth);
+                      final pe = _periodUpperBoundExclusive(ps);
                       final isClosed = _isClosedPeriod(ps);
                       final snaps = isClosed ? _snapshotsByPeriod[DateTime(ps.year, ps.month, ps.day)] : null;
                       final useSnaps = snaps != null && snaps.isNotEmpty;
@@ -465,11 +560,47 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
                                     categoryId: c.id,
                                   ))
                               .toList();
-                      final income = incomeSources.fold<double>(0, (s, i) => s + i.amount);
-            final budgeted = useSnaps
-              ? snaps.values.fold<double>(0, (s, x) => s + x.budgetLimit)
+            final income = isClosed
+              ? (_incomeSumByPeriod[DateTime(ps.year, ps.month, ps.day)] ?? 0.0)
+              : incomeSources.fold<double>(0, (s, i) => s + i.amount);
+                      final baseBudgeted = useSnaps
+                          ? snaps.values.fold<double>(0, (s, x) => s + x.budgetLimit)
                           : categories.fold<double>(0, (s, c) => s + c.budgetLimit);
-                      final int unallocCents = ((income - budgeted) * 100).round();
+
+                      // Compute extras similar to the summary box
+                      final periodLiabs = _liabilitiesForPeriod();
+                      final Set<int> debtCatIds = periodLiabs.map((l) => l.budgetCategoryId).toSet();
+                      final Set<int> fundCatIds =
+                          sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
+
+                      double plannedDebt = 0;
+                      double plannedFunds = 0;
+                      if (useSnaps) {
+                        for (final s in snaps.values) {
+                          if (debtCatIds.contains(s.categoryId)) plannedDebt += s.budgetLimit;
+                          if (fundCatIds.contains(s.categoryId)) plannedFunds += s.budgetLimit;
+                        }
+                      } else {
+                        for (final c in categories) {
+                          if (c.id == null) continue;
+                          if (debtCatIds.contains(c.id)) plannedDebt += c.budgetLimit;
+                          if (fundCatIds.contains(c.id)) plannedFunds += c.budgetLimit;
+                        }
+                      }
+
+                      double paidDebt = 0;
+                      double contributedFunds = 0;
+                      for (final t in transactions) {
+                        if (!t.date.isBefore(ps) && t.date.isBefore(pe)) {
+                          if (debtCatIds.contains(t.categoryId)) paidDebt += t.amount;
+                          if (fundCatIds.contains(t.categoryId)) contributedFunds += t.amount;
+                        }
+                      }
+                      final double extraDebt = paidDebt > plannedDebt ? (paidDebt - plannedDebt) : 0.0;
+                      final double extraFunds = contributedFunds > plannedFunds ? (contributedFunds - plannedFunds) : 0.0;
+
+                      final effectiveBudgeted = baseBudgeted + extraDebt + extraFunds;
+                      final int unallocCents = ((income - effectiveBudgeted) * 100).round();
                       final unalloc = unallocCents > 0 ? unallocCents / 100.0 : 0.0;
                       return BudgetAllocationChart(
                         breakdown: breakdownList,
@@ -629,6 +760,255 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
         ),
       ),
     );
+  }
+
+  Future<void> _editBudgetForPeriodFlow() async {
+    final periodStart = _periodStartFor(selectedMonth);
+    if (!_isClosedPeriod(periodStart)) return;
+
+    // Load snapshots for this period
+    List<models.BudgetSnapshot> snaps = [];
+    try {
+      snaps = await RMinderDatabase.instance.getBudgetSnapshotsFor(periodStart);
+    } catch (e, st) {
+      logError(e, st);
+    }
+    if (snaps.isEmpty) {
+      // No snapshots? Fallback to current categories as a starting point
+      snaps = [
+        for (final c in categories.where((c) => c.id != null))
+          models.BudgetSnapshot(
+            periodStart: DateTime(periodStart.year, periodStart.month, periodStart.day),
+            categoryId: c.id!,
+            categoryName: c.name,
+            budgetLimit: c.budgetLimit,
+          )
+      ];
+    }
+    // Sort by name for stable UI
+    snaps.sort((a, b) => a.categoryName.toLowerCase().compareTo(b.categoryName.toLowerCase()));
+
+    // Controllers for editing amounts; names are read-only in this quick edit
+    final amtCtrls = <int, TextEditingController>{};
+    for (final s in snaps) {
+      amtCtrls[s.categoryId] = TextEditingController(text: s.budgetLimit.toStringAsFixed(2));
+    }
+
+    bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit period budget'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: SizedBox(
+            width: 640,
+            height: 420,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_formatPeriodRange(periodStart), style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: snaps.length,
+                    itemBuilder: (c, i) {
+                      final s = snaps[i];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6.0),
+                        child: Row(children: [
+                          Expanded(
+                            flex: 2,
+                            child: Text(s.categoryName, overflow: TextOverflow.ellipsis),
+                          ),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            width: 120,
+                            child: TextField(
+                              controller: amtCtrls[s.categoryId],
+                              decoration: const InputDecoration(labelText: 'Limit'),
+                              keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
+                              inputFormatters: [CurrencyInputFormatter()],
+                            ),
+                          ),
+                        ]),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // Build pseudo categories from edits and save snapshots
+    final editedCats = <models.BudgetCategory>[];
+    for (final s in snaps) {
+      final txt = amtCtrls[s.categoryId]?.text.trim() ?? '0';
+      final limit = double.tryParse(txt) ?? 0.0;
+      editedCats.add(models.BudgetCategory(id: s.categoryId, name: s.categoryName, budgetLimit: limit, spent: 0));
+    }
+
+    try {
+      await RMinderDatabase.instance.saveBudgetSnapshotForPeriod(periodStart, editedCats);
+      // Reload snapshots for this period and update cache
+      final updated = await RMinderDatabase.instance.getBudgetSnapshotMapFor(periodStart);
+      setState(() {
+        _snapshotsByPeriod[DateTime(periodStart.year, periodStart.month, periodStart.day)] = updated;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved period budget.')));
+      }
+    } catch (e, st) {
+      logError(e, st);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to save budget for period.')));
+      }
+    }
+  }
+
+  Future<void> _editIncomeForPeriodFlow() async {
+    final periodStart = _periodStartFor(selectedMonth);
+    if (!_isClosedPeriod(periodStart)) return;
+
+    // Load existing snapshot rows or fall back to current incomes
+    List<Map<String, dynamic>> rows = [];
+    try {
+      rows = await RMinderDatabase.instance.getIncomeSnapshotsFor(periodStart);
+    } catch (e, st) {
+      logError(e, st);
+    }
+    if (rows.isEmpty) {
+      rows = [
+        for (final s in incomeSources) {'source_name': s.name, 'amount': s.amount}
+      ];
+    }
+
+    // Local editable copy
+    final nameCtrls = <TextEditingController>[];
+    final amtCtrls = <TextEditingController>[];
+    for (final r in rows) {
+      nameCtrls.add(TextEditingController(text: (r['source_name'] ?? '').toString()));
+      final amt = ((r['amount'] ?? 0) as num).toDouble();
+      amtCtrls.add(TextEditingController(text: amt.toStringAsFixed(2)));
+    }
+
+    // Add-row logic is handled inline in the setLocal() call below.
+
+    bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) => AlertDialog(
+            title: const Text('Edit period income'),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: SizedBox(
+                width: 520,
+                height: 360,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_formatPeriodRange(periodStart), style: Theme.of(context).textTheme.bodySmall),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: nameCtrls.length,
+                        itemBuilder: (c, i) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: TextField(
+                                    controller: nameCtrls[i],
+                                    decoration: const InputDecoration(labelText: 'Source name'),
+                                    maxLength: 24,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: TextField(
+                                    controller: amtCtrls[i],
+                                    decoration: const InputDecoration(labelText: 'Amount'),
+                                    keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
+                                    inputFormatters: [CurrencyInputFormatter()],
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Remove',
+                                  onPressed: () => setLocal(() {
+                                    nameCtrls.removeAt(i);
+                                    amtCtrls.removeAt(i);
+                                  }),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () => setLocal(() {
+                          nameCtrls.add(TextEditingController());
+                          amtCtrls.add(TextEditingController(text: '0.00'));
+                        }),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add income source'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+              ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    // Validate and save
+    final edits = <models.IncomeSource>[];
+    for (var i = 0; i < nameCtrls.length; i++) {
+      final name = nameCtrls[i].text.trim();
+      final amount = double.tryParse(amtCtrls[i].text.trim()) ?? 0;
+      if (name.isEmpty) continue; // skip empties
+      if (amount < 0) continue; // ignore negative
+      edits.add(models.IncomeSource(name: name, amount: amount));
+    }
+    try {
+      await RMinderDatabase.instance.saveIncomeSnapshotForPeriod(periodStart, edits);
+      // Update local sum cache and refresh UI
+      final sum = edits.fold<double>(0, (s, e) => s + e.amount);
+      setState(() {
+        _incomeSumByPeriod[DateTime(periodStart.year, periodStart.month, periodStart.day)] = sum;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved period income.')));
+      }
+    } catch (e, st) {
+      logError(e, st);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Failed to save income for period.')));
+      }
+    }
   }
 
   double _contributedThisMonthFor(models.SinkingFund fund) {
@@ -791,6 +1171,8 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
       final nextStart = todayDate; // New period starts today
       // Snapshot current budgets for this closing period so historical reports show the original limits
       await RMinderDatabase.instance.saveBudgetSnapshotForPeriod(periodStart, categories);
+  // Snapshot current income sources for this closing period
+  await RMinderDatabase.instance.saveIncomeSnapshotForPeriod(periodStart, incomeSources);
       
       // Auto-archive liabilities that are paid off (balance <= 0)
       for (final liab in activeLiabilities) {
@@ -828,7 +1210,7 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
         );
         // Update database BEFORE setState to ensure persistence before UI update
         await RMinderDatabase.instance.setActivePeriodStart(nextStart);
-        await _loadData();
+  await _loadData();
         if (!mounted) return;
         setState(() {
           selectedMonth = nextStart;

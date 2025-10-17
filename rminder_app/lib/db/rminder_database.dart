@@ -19,7 +19,7 @@ class RMinderDatabase {
     final fullPath = join(dbDir, fileName);
     return await openDatabase(
       fullPath,
-      version: 9,
+      version: 10,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -104,6 +104,15 @@ class RMinderDatabase {
           )
         ''');
         await db.execute('CREATE INDEX IF NOT EXISTS idx_budget_snapshots_period ON budget_snapshots(period_start)');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS income_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_start TEXT NOT NULL,
+            source_name TEXT NOT NULL,
+            amount REAL NOT NULL
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_income_snapshots_period ON income_snapshots(period_start)');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -187,6 +196,17 @@ class RMinderDatabase {
         if (oldVersion < 9) {
           // Add is_archived column to existing liabilities table
           await db.execute('ALTER TABLE liabilities ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
+        }
+        if (oldVersion < 10) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS income_snapshots (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              period_start TEXT NOT NULL,
+              source_name TEXT NOT NULL,
+              amount REAL NOT NULL
+            )
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_income_snapshots_period ON income_snapshots(period_start)');
         }
       },
     );
@@ -855,6 +875,8 @@ class RMinderDatabase {
       
       // Delete budget snapshots for this period (user will see current budgets until they close again)
       await txn.delete('budget_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+      // Delete income snapshots for this period (user will see current incomes until they close again)
+      await txn.delete('income_snapshots', where: 'period_start = ?', whereArgs: [ps]);
       
       return true;
     });
@@ -993,5 +1015,60 @@ class RMinderDatabase {
     if (parsed == null) return 1;
     if (parsed < 1 || parsed > 28) return 1;
     return parsed;
+  }
+
+  // ---------------- Income Snapshots ----------------
+  Future<void> saveIncomeSnapshotForPeriod(DateTime periodStart, List<models.IncomeSource> sources) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    await db.transaction((txn) async {
+      // Replace any existing rows for this period to avoid duplicates
+      await txn.delete('income_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+      for (final s in sources) {
+        await txn.insert('income_snapshots', {
+          'period_start': ps,
+          'source_name': s.name,
+          'amount': s.amount,
+        });
+      }
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getIncomeSnapshotsFor(DateTime periodStart) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    return await db.query('income_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+  }
+
+  Future<double> getIncomeSnapshotSumFor(DateTime periodStart) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final rows = await db.rawQuery(
+      'SELECT SUM(amount) as total FROM income_snapshots WHERE period_start = ?', [ps],
+    );
+    final total = (rows.first['total'] ?? 0) as num;
+    return total.toDouble();
+  }
+
+  // Backfill income snapshots for all closed periods that don't have them yet
+  Future<void> backfillIncomeSnapshots() async {
+    final db = await instance.database;
+    final closed = await getClosedMonths();
+    final incomes = await getIncomeSources();
+    for (final period in closed) {
+      final ps = DateTime(period.year, period.month, period.day).toIso8601String();
+      final existing = await db.query('income_snapshots', where: 'period_start = ?', whereArgs: [ps], limit: 1);
+      if (existing.isNotEmpty) continue;
+      // Write one row per current income source
+      await db.transaction((txn) async {
+        for (final s in incomes) {
+          await txn.insert('income_snapshots', {
+            'period_start': ps,
+            'source_name': s.name,
+            'amount': s.amount,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+      });
+    }
   }
 }
