@@ -17,6 +17,8 @@ class _BudgetPageState extends State<BudgetPage> {
   List<models.IncomeSource> incomeSources = [];
   List<models.Liability> liabilities = [];
   List<models.SinkingFund> sinkingFunds = [];
+  List<models.Transaction> transactions = [];
+  DateTime? _activePeriodStart;
   final ScrollController _budgetScroll = ScrollController();
 
   double get totalIncome => incomeSources.fold(0.0, (s, i) => s + i.amount);
@@ -28,6 +30,8 @@ class _BudgetPageState extends State<BudgetPage> {
     _loadIncomeSources();
     _loadLiabilities();
     _loadSinkingFunds();
+    _loadTransactions();
+    _loadActivePeriod();
   }
 
   @override
@@ -70,6 +74,57 @@ class _BudgetPageState extends State<BudgetPage> {
     } catch (e, st) {
       logError(e, st);
     }
+  }
+
+  Future<void> _loadTransactions() async {
+    try {
+      final list = await RMinderDatabase.instance.getTransactions();
+      setState(() => transactions = list);
+    } catch (e, st) {
+      logError(e, st);
+    }
+  }
+
+  Future<void> _loadActivePeriod() async {
+    try {
+      final d = await RMinderDatabase.instance.getActivePeriodStart();
+      setState(() => _activePeriodStart = d);
+    } catch (e, st) {
+      logError(e, st);
+    }
+  }
+
+  DateTime _activePeriodEndExclusive() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day).add(const Duration(days: 1));
+  }
+
+  // Compute extras beyond plan for debts and funds within the active period
+  double _extrasBeyondPlanForActivePeriod() {
+    if (_activePeriodStart == null) return 0.0;
+    final ps = DateTime(_activePeriodStart!.year, _activePeriodStart!.month, _activePeriodStart!.day);
+    final pe = _activePeriodEndExclusive();
+    // Debt and fund category ids
+    final debtCatIds = liabilities.map((l) => l.budgetCategoryId).toSet();
+    final fundCatIds = sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
+
+    // Planned totals
+    final plannedDebt = liabilities.where((l) => !l.isArchived).fold<double>(0.0, (s, l) => s + l.planned);
+    final plannedFunds = sinkingFunds.fold<double>(0.0, (s, f) => s + f.monthlyContribution);
+
+    // Actuals in period
+    double paidDebt = 0.0;
+    double contributedFunds = 0.0;
+    for (final t in transactions) {
+      if (!t.date.isBefore(ps) && t.date.isBefore(pe)) {
+        if (debtCatIds.contains(t.categoryId)) paidDebt += t.amount;
+        if (fundCatIds.contains(t.categoryId)) contributedFunds += t.amount; // withdrawals negative
+      }
+    }
+    final extraDebt = paidDebt > plannedDebt ? (paidDebt - plannedDebt) : 0.0;
+    final extraFunds = contributedFunds > plannedFunds ? (contributedFunds - plannedFunds) : 0.0;
+    final extras = extraDebt + extraFunds;
+    return extras > 0 ? extras : 0.0;
   }
 
   Future<void> _showAddIncomeSourceDialog() async {
@@ -218,10 +273,12 @@ class _BudgetPageState extends State<BudgetPage> {
 
   Future<void> _showAddCategoryDialog() async {
     final nameController = TextEditingController();
-  final limitController = TextEditingController(text: '0.00');
+    final limitController = TextEditingController(text: '0.00');
     double sliderValue = 0;
     final allocated = categories.fold<double>(0.0, (s, c) => s + c.budgetLimit);
-    final double maxValue = totalIncome > 0 ? ((totalIncome - allocated).clamp(0.0, totalIncome)).toDouble() : 10000.0;
+    final extras = _extrasBeyondPlanForActivePeriod();
+    final available = totalIncome - allocated - extras;
+    final double maxValue = totalIncome > 0 ? (available.clamp(0.0, totalIncome)).toDouble() : 10000.0;
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -323,11 +380,13 @@ class _BudgetPageState extends State<BudgetPage> {
   }
 
   Future<void> _showEditCategoryDialog(models.BudgetCategory category) async {
-    final nameController = TextEditingController(text: category.name);
+  final nameController = TextEditingController(text: category.name);
     double sliderValue = category.budgetLimit;
     final allocatedOthers =
         categories.where((c) => c.id != category.id).fold<double>(0.0, (s, c) => s + c.budgetLimit);
-    final double maxValue = totalIncome > 0 ? ((totalIncome - allocatedOthers).clamp(0.0, totalIncome)).toDouble() : 10000.0;
+  final extras = _extrasBeyondPlanForActivePeriod();
+  final available = totalIncome - allocatedOthers - extras;
+  final double maxValue = totalIncome > 0 ? (available.clamp(0.0, totalIncome)).toDouble() : 10000.0;
     sliderValue = sliderValue.clamp(0.0, maxValue).toDouble();
   final limitController = TextEditingController(text: sliderValue.toStringAsFixed(2));
     await showDialog(
