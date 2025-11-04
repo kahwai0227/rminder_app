@@ -118,7 +118,8 @@ class _BudgetPageState extends State<BudgetPage> {
     for (final t in transactions) {
       if (!t.date.isBefore(ps) && t.date.isBefore(pe)) {
         if (debtCatIds.contains(t.categoryId)) paidDebt += t.amount;
-        if (fundCatIds.contains(t.categoryId)) contributedFunds += t.amount; // withdrawals negative
+        // Only count positive amounts as contributions (ignore withdrawals)
+        if (fundCatIds.contains(t.categoryId) && t.amount > 0) contributedFunds += t.amount;
       }
     }
     final extraDebt = paidDebt > plannedDebt ? (paidDebt - plannedDebt) : 0.0;

@@ -465,7 +465,8 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
                       for (final t in transactions) {
                         if (!t.date.isBefore(ps) && t.date.isBefore(pe)) {
                           if (debtCatIds.contains(t.categoryId)) paidDebt += t.amount;
-                          if (fundCatIds.contains(t.categoryId)) contributedFunds += t.amount; // withdrawals are negative
+                          // Only count positive amounts as contributions (ignore withdrawals)
+                          if (fundCatIds.contains(t.categoryId) && t.amount > 0) contributedFunds += t.amount;
                         }
                       }
 
@@ -593,7 +594,8 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
                       for (final t in transactions) {
                         if (!t.date.isBefore(ps) && t.date.isBefore(pe)) {
                           if (debtCatIds.contains(t.categoryId)) paidDebt += t.amount;
-                          if (fundCatIds.contains(t.categoryId)) contributedFunds += t.amount;
+                          // Only count positive amounts as contributions (ignore withdrawals)
+                          if (fundCatIds.contains(t.categoryId) && t.amount > 0) contributedFunds += t.amount;
                         }
                       }
                       final double extraDebt = paidDebt > plannedDebt ? (paidDebt - plannedDebt) : 0.0;
@@ -1018,7 +1020,10 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
     final end = _periodUpperBoundExclusive(start);
     for (final t in transactions) {
       if (t.categoryId == fund.budgetCategoryId && !t.date.isBefore(start) && t.date.isBefore(end)) {
-        total += t.amount;
+        // Only count positive amounts (contributions), ignore withdrawals (negative amounts)
+        if (t.amount > 0) {
+          total += t.amount;
+        }
       }
     }
     return total;

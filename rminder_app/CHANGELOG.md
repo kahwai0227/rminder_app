@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.2] - 2025-11-04
+
+### Fixed
+- Fund contributions calculation: withdrawals (spending from a sinking fund) no longer reduce the "contributed" amount for that period.
+- Budget availability: fund withdrawals no longer create false "extra" budget availability in the active period.
+
 ## [1.3.1] - 2025-10-17
 
 ### Added

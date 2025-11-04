@@ -737,6 +737,7 @@ class RMinderDatabase {
   }
 
   // Sum contributions recorded for a fund for a given month
+  // Only counts positive amounts (contributions), ignores withdrawals (negative amounts)
   Future<double> sumContributedForFundInMonth(int fundId, DateTime month) async {
     final db = await instance.database;
     final start = DateTime(month.year, month.month, 1);
@@ -746,7 +747,7 @@ class RMinderDatabase {
     final catId = funds.first['budgetCategoryId'] as int?;
     if (catId == null) return 0;
     final result = await db.rawQuery(
-      'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ? AND date >= ? AND date < ?',
+      'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ? AND date >= ? AND date < ? AND amount > 0',
       [catId, start.toIso8601String(), end.toIso8601String()],
     );
     final total = (result.first['total'] ?? 0) as num;
