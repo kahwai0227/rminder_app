@@ -20,8 +20,9 @@ class _BudgetPageState extends State<BudgetPage> {
   List<models.Transaction> transactions = [];
   DateTime? _activePeriodStart;
   final ScrollController _budgetScroll = ScrollController();
+  double _carryIncome = 0.0; // one-time income for the active period
 
-  double get totalIncome => incomeSources.fold(0.0, (s, i) => s + i.amount);
+  double get totalIncome => incomeSources.fold(0.0, (s, i) => s + i.amount) + _carryIncome;
 
   @override
   void initState() {
@@ -43,6 +44,7 @@ class _BudgetPageState extends State<BudgetPage> {
   Future<void> _loadCategories() async {
     try {
       final cats = await RMinderDatabase.instance.getCategories();
+      if (!mounted) return;
       setState(() => categories = cats);
     } catch (e, st) {
       logError(e, st);
@@ -52,6 +54,7 @@ class _BudgetPageState extends State<BudgetPage> {
   Future<void> _loadIncomeSources() async {
     try {
       final sources = await RMinderDatabase.instance.getIncomeSources();
+      if (!mounted) return;
       setState(() => incomeSources = sources);
     } catch (e, st) {
       logError(e, st);
@@ -61,6 +64,7 @@ class _BudgetPageState extends State<BudgetPage> {
   Future<void> _loadLiabilities() async {
     try {
       final list = await RMinderDatabase.instance.getLiabilities();
+      if (!mounted) return;
       setState(() => liabilities = list);
     } catch (e, st) {
       logError(e, st);
@@ -70,6 +74,7 @@ class _BudgetPageState extends State<BudgetPage> {
   Future<void> _loadSinkingFunds() async {
     try {
       final list = await RMinderDatabase.instance.getSinkingFunds();
+      if (!mounted) return;
       setState(() => sinkingFunds = list);
     } catch (e, st) {
       logError(e, st);
@@ -79,6 +84,7 @@ class _BudgetPageState extends State<BudgetPage> {
   Future<void> _loadTransactions() async {
     try {
       final list = await RMinderDatabase.instance.getTransactions();
+      if (!mounted) return;
       setState(() => transactions = list);
     } catch (e, st) {
       logError(e, st);
@@ -88,7 +94,15 @@ class _BudgetPageState extends State<BudgetPage> {
   Future<void> _loadActivePeriod() async {
     try {
       final d = await RMinderDatabase.instance.getActivePeriodStart();
+      if (!mounted) return;
       setState(() => _activePeriodStart = d);
+      // Load carry-forward income for the active period (editable one-time amount)
+      if (d != null) {
+        final key = 'carry_income:${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+        final str = await RMinderDatabase.instance.getSetting(key);
+        final val = double.tryParse(str ?? '0') ?? 0.0;
+        if (mounted) setState(() => _carryIncome = val);
+      }
     } catch (e, st) {
       logError(e, st);
     }
@@ -188,6 +202,64 @@ class _BudgetPageState extends State<BudgetPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _showEditCarryIncomeDialog() async {
+    if (_activePeriodStart == null) return;
+    final controller = TextEditingController(text: _carryIncome.toStringAsFixed(2));
+    final period = _activePeriodStart!;
+    final key = 'carry_income:${period.year.toString().padLeft(4, '0')}-${period.month.toString().padLeft(2, '0')}-${period.day.toString().padLeft(2, '0')}';
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Carry-forward Income'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(labelText: 'Amount'),
+              keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
+              inputFormatters: [CurrencyInputFormatter()],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              final amount = double.tryParse(controller.text.trim()) ?? 0.0;
+              await RMinderDatabase.instance.setSetting(key, amount.toStringAsFixed(2));
+              if (mounted) setState(() => _carryIncome = amount);
+              if (mounted) Navigator.pop(context);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  
+
+  Future<void> _deleteCarryIncome() async {
+    if (_activePeriodStart == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete carry-forward?'),
+        content: const Text('This removes the one-time carry-forward amount for this active period.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    final period = _activePeriodStart!;
+    final key = 'carry_income:${period.year.toString().padLeft(4, '0')}-${period.month.toString().padLeft(2, '0')}-${period.day.toString().padLeft(2, '0')}';
+    await RMinderDatabase.instance.deleteSetting(key);
+    if (mounted) setState(() => _carryIncome = 0.0);
   }
 
   Future<void> _deleteIncomeSource(int id) async {
@@ -530,14 +602,39 @@ class _BudgetPageState extends State<BudgetPage> {
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                         const Text('Income', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.add),
-                          label: const Text('Add'),
-                          onPressed: _showAddIncomeSourceDialog,
-                          style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                        ),
+                        Row(children: [
+                          ElevatedButton.icon(
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add'),
+                            onPressed: _showAddIncomeSourceDialog,
+                            style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+                          ),
+                          const SizedBox(width: 8),
+                        ]),
                       ]),
                       const SizedBox(height: 10),
+                      // Carry-forward income (show only when non-zero)
+                      if (_carryIncome > 0)
+                        Card(
+                          child: ListTile(
+                            title: Text(
+                              'Carry-forward',
+                              style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+                            ),
+                            subtitle: Text('Amount: ₹${_carryIncome.toStringAsFixed(2)}'),
+                            trailing: Wrap(spacing: 4, children: [
+                              IconButton(
+                                icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
+                                onPressed: _showEditCarryIncomeDialog,
+                              ),
+                              IconButton(
+                                icon: Icon(Icons.delete_forever, color: Theme.of(context).colorScheme.error),
+                                tooltip: 'Delete',
+                                onPressed: _deleteCarryIncome,
+                              ),
+                            ]),
+                          ),
+                        ),
                       incomeSources.isEmpty
                           ? const Center(child: Text('No income sources yet.'))
                           : Column(

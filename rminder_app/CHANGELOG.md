@@ -1,5 +1,59 @@
 # Changelog
 
+## [1.4.0] - 2025-11-18
+
+### Highlights
+- Immutable historical reports via full snapshot archival on Close Period.
+- Carry-forward income UX: editable/deletable card on Budget; shows only when present.
+- Local notifications with Android 13+ runtime permission support and a quick “Enable notifications” action.
+
+### Added
+- Period archival now snapshots everything on close:
+	- Spending by category
+	- Liabilities (planned vs paid)
+	- Sinking funds (monthly contribution vs contributed)
+	- Existing budget and income snapshots preserved
+- Reports for closed periods read exclusively from snapshots (planned, actual/extras, and spending), so past periods no longer change when editing the active period.
+- Global Close Period action available from any page.
+- Budget page: Carry-forward income is a first-class, one-time card you can edit or delete. The card appears only when non-zero.
+- Reports header polish: centered label between arrows; Jump button on the far right.
+- Notifications:
+	- Local notifications for budget alerts (over/near budget) and daily “record spending” reminder.
+	- Android 13+ runtime permission flow; a simple “Enable notifications” menu item in Reports opens settings if denied.
+
+### Changed
+- Removed “Unspent amount” row and the “Includes carry-forward…” note in Reports’ Budget Summary.
+- Restored Reports layout to previous UI (full-width summary, consistent section headings, overflow menu).
+
+### Fixed
+- Prevent closing a period on the active period’s start day to avoid invalid close ranges.
+- Guarded async setState calls in Budget to avoid “setState() called after dispose()” crashes when navigating quickly.
+- Android build fixes:
+	- Enabled core library desugaring and upgraded flutter_local_notifications plugin.
+	- Added POST_NOTIFICATIONS to AndroidManifest and permission request handling.
+
+### Internal
+- Database version bumped to v11 with new tables:
+	- spending_snapshots(period_start, category_id, category_name, spent)
+	- liability_snapshots(period_start, liability_id, liability_name, category_id, planned, paid)
+	- fund_snapshots(period_start, fund_id, fund_name, category_id, monthly_contribution, contributed)
+
+## [1.3.4] - 2025-11-18
+
+### Fixed
+- **Unallocated budget calculation**: Completely rewrote the budget calculation logic to follow the correct formula:
+  - Budget = category budgets (excluding debt/fund categories) + planned debt payments + planned fund monthly contributions
+  - Unallocated = income - budget - extra debt payments - extra fund contributions
+- Debt payments now use liability's `planned` field instead of budget category limits
+- Fund contributions now use sinking fund's `monthlyContribution` instead of budget category limits
+- Extra contributions and debt payments are now subtracted from unallocated (not added to budget)
+
+## [1.3.3] - 2025-11-18
+
+### Fixed
+- **Sinking fund extra contributions**: Extra contributions beyond the planned monthly amount now correctly reduce unallocated budget. Previously, only the planned monthly contribution was counted, so extra contributions didn't affect the unallocated amount.
+- Unallocated calculation now uses sinking fund's `monthlyContribution` field instead of budget category's `budgetLimit` for accurate tracking.
+
 ## [1.3.2] - 2025-11-04
 
 ### Fixed

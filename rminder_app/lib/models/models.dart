@@ -195,3 +195,133 @@ class BudgetSnapshot {
     );
   }
 }
+
+class SpendingSnapshot {
+  final int? id;
+  final DateTime periodStart;
+  final int categoryId;
+  final String categoryName;
+  final double spent; // positive spend captured at close
+
+  SpendingSnapshot({
+    this.id,
+    required this.periodStart,
+    required this.categoryId,
+    required this.categoryName,
+    required this.spent,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'period_start': DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String(),
+      'category_id': categoryId,
+      'category_name': categoryName,
+      'spent': spent,
+    };
+  }
+
+  factory SpendingSnapshot.fromMap(Map<String, dynamic> map) {
+    final ps = DateTime.parse(map['period_start'] as String);
+    final p = DateTime(ps.year, ps.month, ps.day);
+    return SpendingSnapshot(
+      id: map['id'] as int?,
+      periodStart: p,
+      categoryId: map['category_id'] as int,
+      categoryName: map['category_name'] as String,
+      spent: (map['spent'] as num).toDouble(),
+    );
+  }
+}
+
+class LiabilitySnapshot {
+  final int? id;
+  final DateTime periodStart;
+  final int liabilityId;
+  final String liabilityName;
+  final int categoryId; // category used for payments at the time
+  final double planned;
+  final double paid; // total payments recorded in the period
+
+  LiabilitySnapshot({
+    this.id,
+    required this.periodStart,
+    required this.liabilityId,
+    required this.liabilityName,
+    required this.categoryId,
+    required this.planned,
+    required this.paid,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'period_start': DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String(),
+      'liability_id': liabilityId,
+      'liability_name': liabilityName,
+      'category_id': categoryId,
+      'planned': planned,
+      'paid': paid,
+    };
+  }
+
+  factory LiabilitySnapshot.fromMap(Map<String, dynamic> map) {
+    final ps = DateTime.parse(map['period_start'] as String);
+    final p = DateTime(ps.year, ps.month, ps.day);
+    return LiabilitySnapshot(
+      id: map['id'] as int?,
+      periodStart: p,
+      liabilityId: map['liability_id'] as int,
+      liabilityName: map['liability_name'] as String,
+      categoryId: map['category_id'] as int,
+      planned: (map['planned'] as num).toDouble(),
+      paid: (map['paid'] as num).toDouble(),
+    );
+  }
+}
+
+class FundSnapshot {
+  final int? id;
+  final DateTime periodStart;
+  final int fundId;
+  final String fundName;
+  final int? categoryId; // category used for contributions at the time (optional)
+  final double monthlyContribution;
+  final double contributed; // total contributions recorded in the period
+
+  FundSnapshot({
+    this.id,
+    required this.periodStart,
+    required this.fundId,
+    required this.fundName,
+    required this.categoryId,
+    required this.monthlyContribution,
+    required this.contributed,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'period_start': DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String(),
+      'fund_id': fundId,
+      'fund_name': fundName,
+      'category_id': categoryId,
+      'monthly_contribution': monthlyContribution,
+      'contributed': contributed,
+    };
+  }
+
+  factory FundSnapshot.fromMap(Map<String, dynamic> map) {
+    final ps = DateTime.parse(map['period_start'] as String);
+    final p = DateTime(ps.year, ps.month, ps.day);
+    return FundSnapshot(
+      id: map['id'] as int?,
+      periodStart: p,
+      fundId: map['fund_id'] as int,
+      fundName: map['fund_name'] as String,
+      categoryId: map['category_id'] as int?,
+      monthlyContribution: (map['monthly_contribution'] as num).toDouble(),
+      contributed: (map['contributed'] as num).toDouble(),
+    );
+  }
+}

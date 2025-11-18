@@ -19,7 +19,7 @@ class RMinderDatabase {
     final fullPath = join(dbDir, fileName);
     return await openDatabase(
       fullPath,
-      version: 10,
+      version: 11,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -113,6 +113,43 @@ class RMinderDatabase {
           )
         ''');
         await db.execute('CREATE INDEX IF NOT EXISTS idx_income_snapshots_period ON income_snapshots(period_start)');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS spending_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_start TEXT NOT NULL,
+            category_id INTEGER NOT NULL,
+            category_name TEXT NOT NULL,
+            spent REAL NOT NULL,
+            UNIQUE(period_start, category_id)
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_spending_snapshots_period ON spending_snapshots(period_start)');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS liability_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_start TEXT NOT NULL,
+            liability_id INTEGER NOT NULL,
+            liability_name TEXT NOT NULL,
+            category_id INTEGER NOT NULL,
+            planned REAL NOT NULL,
+            paid REAL NOT NULL,
+            UNIQUE(period_start, liability_id)
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_liability_snapshots_period ON liability_snapshots(period_start)');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS fund_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_start TEXT NOT NULL,
+            fund_id INTEGER NOT NULL,
+            fund_name TEXT NOT NULL,
+            category_id INTEGER,
+            monthly_contribution REAL NOT NULL,
+            contributed REAL NOT NULL,
+            UNIQUE(period_start, fund_id)
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_fund_snapshots_period ON fund_snapshots(period_start)');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -207,6 +244,45 @@ class RMinderDatabase {
             )
           ''');
           await db.execute('CREATE INDEX IF NOT EXISTS idx_income_snapshots_period ON income_snapshots(period_start)');
+        }
+        if (oldVersion < 11) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS spending_snapshots (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              period_start TEXT NOT NULL,
+              category_id INTEGER NOT NULL,
+              category_name TEXT NOT NULL,
+              spent REAL NOT NULL,
+              UNIQUE(period_start, category_id)
+            )
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_spending_snapshots_period ON spending_snapshots(period_start)');
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS liability_snapshots (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              period_start TEXT NOT NULL,
+              liability_id INTEGER NOT NULL,
+              liability_name TEXT NOT NULL,
+              category_id INTEGER NOT NULL,
+              planned REAL NOT NULL,
+              paid REAL NOT NULL,
+              UNIQUE(period_start, liability_id)
+            )
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_liability_snapshots_period ON liability_snapshots(period_start)');
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS fund_snapshots (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              period_start TEXT NOT NULL,
+              fund_id INTEGER NOT NULL,
+              fund_name TEXT NOT NULL,
+              category_id INTEGER,
+              monthly_contribution REAL NOT NULL,
+              contributed REAL NOT NULL,
+              UNIQUE(period_start, fund_id)
+            )
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_fund_snapshots_period ON fund_snapshots(period_start)');
         }
       },
     );
@@ -1002,6 +1078,11 @@ class RMinderDatabase {
     return rows.first['value'] as String;
   }
 
+  Future<int> deleteSetting(String key) async {
+    final db = await instance.database;
+    return await db.delete('settings', where: 'key = ?', whereArgs: [key]);
+  }
+
   static const String _resetDayKey = 'reset_day';
 
   Future<void> setResetDay(int day) async {
@@ -1071,5 +1152,106 @@ class RMinderDatabase {
         }
       });
     }
+  }
+
+  // ---------------- Spending Snapshots ----------------
+  Future<void> saveSpendingSnapshotForPeriod(
+    DateTime periodStart,
+    List<models.BudgetCategory> categories,
+    Map<int, double> spentByCategory,
+  ) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    await db.transaction((txn) async {
+      for (final c in categories) {
+        if (c.id == null) continue;
+        final spent = (spentByCategory[c.id!] ?? 0.0);
+        await txn.insert(
+          'spending_snapshots',
+          {
+            'period_start': ps,
+            'category_id': c.id,
+            'category_name': c.name,
+            'spent': spent,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  Future<Map<int, double>> getSpendingSnapshotMapFor(DateTime periodStart) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final rows = await db.query('spending_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+    return {for (final r in rows) (r['category_id'] as int): ((r['spent'] as num).toDouble())};
+  }
+
+  // ---------------- Liability Snapshots ----------------
+  Future<void> saveLiabilitySnapshotForPeriod(
+    DateTime periodStart,
+    List<models.Liability> liabilities,
+    Map<int, double> paidByLiabilityId,
+  ) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    await db.transaction((txn) async {
+      for (final l in liabilities) {
+        if (l.id == null) continue;
+        await txn.insert(
+          'liability_snapshots',
+          {
+            'period_start': ps,
+            'liability_id': l.id,
+            'liability_name': l.name,
+            'category_id': l.budgetCategoryId,
+            'planned': l.planned,
+            'paid': paidByLiabilityId[l.id!] ?? 0.0,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  Future<List<models.LiabilitySnapshot>> getLiabilitySnapshotsFor(DateTime periodStart) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final rows = await db.query('liability_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+    return rows.map((m) => models.LiabilitySnapshot.fromMap(m)).toList();
+  }
+
+  // ---------------- Fund Snapshots ----------------
+  Future<void> saveFundSnapshotForPeriod(
+    DateTime periodStart,
+    List<models.SinkingFund> funds,
+    Map<int, double> contributedByFundId,
+  ) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    await db.transaction((txn) async {
+      for (final f in funds) {
+        if (f.id == null) continue;
+        await txn.insert(
+          'fund_snapshots',
+          {
+            'period_start': ps,
+            'fund_id': f.id,
+            'fund_name': f.name,
+            'category_id': f.budgetCategoryId,
+            'monthly_contribution': f.monthlyContribution,
+            'contributed': contributedByFundId[f.id!] ?? 0.0,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  Future<List<models.FundSnapshot>> getFundSnapshotsFor(DateTime periodStart) async {
+    final db = await instance.database;
+    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final rows = await db.query('fund_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+    return rows.map((m) => models.FundSnapshot.fromMap(m)).toList();
   }
 }

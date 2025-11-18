@@ -5,6 +5,9 @@ import '../utils/logger.dart';
 import '../widgets/charts.dart';
 import '../utils/ui_intents.dart';
 import '../utils/currency_input_formatter.dart';
+import '../services/period_service.dart';
+import '../services/notification_service.dart';
+import 'user_guide.dart' show showUserGuide;
 
 class ReportingPage extends StatefulWidget {
   const ReportingPage({Key? key}) : super(key: key);
@@ -12,7 +15,7 @@ class ReportingPage extends StatefulWidget {
   State<ReportingPage> createState() => _ReportingPageState();
 }
 
-enum CloseAction { carryForward, payDebt }
+// Legacy CloseAction and local close flow have been removed in favor of PeriodService
 
 class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveClientMixin {
   @override
@@ -25,6 +28,7 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
   List<models.IncomeSource> incomeSources = [];
   DateTime selectedMonth = DateTime.now();
   DateTime? _activePeriodStart; // Track the actual active period start date
+  double _activeCarryIncome = 0.0; // One-time carry-forward income for active period
   List<DateTime> _closedMonths = [];
   // Map of period start date -> actual closed-at date (both truncated to date)
   final Map<DateTime, DateTime> _closedAtByStart = {};
@@ -32,6 +36,12 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
   final Map<DateTime, Map<int, models.BudgetSnapshot>> _snapshotsByPeriod = {};
   // Sum of income snapshots per closed period (periodStart -> total income)
   final Map<DateTime, double> _incomeSumByPeriod = {};
+  // Spending snapshots per closed period: periodStart -> (categoryId -> spent)
+  final Map<DateTime, Map<int, double>> _spendingByPeriod = {};
+  // Liability snapshots per closed period
+  final Map<DateTime, List<models.LiabilitySnapshot>> _liabSnapsByPeriod = {};
+  // Fund snapshots per closed period
+  final Map<DateTime, List<models.FundSnapshot>> _fundSnapsByPeriod = {};
   bool _isDetailsDialogOpen = false;
   final ScrollController _reportScroll = ScrollController();
   // Periods are anchored by last close; no static reset day.
@@ -56,9 +66,13 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
 
   void _maybeHandleClosePeriodIntent() {
     // Debounce by posting to next frame to avoid re-entrancy
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      _closeMonthFlow();
+      // Use the global close flow so behavior matches other pages
+      await PeriodService.closeActivePeriod(context);
+      // Refresh local data after closing
+      await _loadData();
+      await _loadActivePeriod();
     });
   }
 
@@ -120,6 +134,482 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
     return '${_formatDayMon(s, withYear: withYear)} – ${_formatDayMon(endInclusive, withYear: withYear)}';
   }
 
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final ps = _periodStartFor(selectedMonth);
+    final isClosed = _isClosedPeriod(ps);
+    final snaps = isClosed ? _snapshotsByPeriod[DateTime(ps.year, ps.month, ps.day)] : null;
+    final useSnaps = snaps != null && snaps.isNotEmpty;
+
+    // Income for this period: snapshot sum for closed, else current income sources (+carry-forward for active period)
+    final double periodIncome = isClosed
+        ? (_incomeSumByPeriod[DateTime(ps.year, ps.month, ps.day)] ?? 0.0)
+        : incomeSources.fold<double>(0, (s, i) => s + i.amount) +
+            ((_activePeriodStart != null && _sameDay(ps, _activePeriodStart!)) ? _activeCarryIncome : 0.0);
+
+    // Determine debt/fund category ids
+    final periodLiabs = _liabilitiesForPeriod();
+    Set<int> debtCatIds = periodLiabs.map((l) => l.budgetCategoryId).toSet();
+    Set<int> fundCatIds = sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
+    if (isClosed) {
+      final key = DateTime(ps.year, ps.month, ps.day);
+      final ls = _liabSnapsByPeriod[key] ?? const [];
+      final fs = _fundSnapsByPeriod[key] ?? const [];
+      debtCatIds = ls.map((s) => s.categoryId).toSet();
+      fundCatIds = fs.where((s) => s.categoryId != null).map((s) => s.categoryId!).toSet();
+    }
+
+    // Base category budgets (excluding debt and fund categories)
+  final double baseCategoryBudget = useSnaps
+    ? snaps.values
+            .where((x) => !debtCatIds.contains(x.categoryId) && !fundCatIds.contains(x.categoryId))
+            .fold<double>(0, (s, x) => s + x.budgetLimit)
+        : categories
+            .where((c) => c.id != null && !debtCatIds.contains(c.id!) && !fundCatIds.contains(c.id!))
+            .fold<double>(0, (s, c) => s + c.budgetLimit);
+
+    // Planned debt payments: use snapshots for closed periods
+    double plannedDebt = 0;
+    if (isClosed) {
+      final key = DateTime(ps.year, ps.month, ps.day);
+      for (final s in (_liabSnapsByPeriod[key] ?? const [])) {
+        plannedDebt += s.planned;
+      }
+    } else {
+      for (final liab in periodLiabs) {
+        plannedDebt += liab.planned;
+      }
+    }
+
+    // Planned fund contributions
+    double plannedFunds = 0;
+    if (isClosed) {
+      final key = DateTime(ps.year, ps.month, ps.day);
+      for (final s in (_fundSnapsByPeriod[key] ?? const [])) {
+        plannedFunds += s.monthlyContribution;
+      }
+    } else {
+      for (final fund in sinkingFunds) {
+        plannedFunds += fund.monthlyContribution;
+      }
+    }
+
+    // Actual extras beyond plan (sum positive per-item deltas)
+    double extraDebt = 0;
+    double extraFunds = 0;
+    if (isClosed) {
+      final key = DateTime(ps.year, ps.month, ps.day);
+      for (final s in (_liabSnapsByPeriod[key] ?? const [])) {
+        final over = s.paid - s.planned;
+        if (over > 0) extraDebt += over;
+      }
+      for (final s in (_fundSnapsByPeriod[key] ?? const [])) {
+        final over = s.contributed - s.monthlyContribution;
+        if (over > 0) extraFunds += over;
+      }
+    } else {
+      for (final liab in periodLiabs) {
+        final paid = _paidThisMonthFor(liab);
+        final over = paid - liab.planned;
+        if (over > 0) extraDebt += over;
+      }
+      for (final fund in sinkingFunds) {
+        final contrib = _contributedThisMonthFor(fund);
+        final over = contrib - fund.monthlyContribution;
+        if (over > 0) extraFunds += over;
+      }
+    }
+
+    // Totals per formula
+    final double totalBudget = baseCategoryBudget + plannedDebt + plannedFunds;
+    final double unallocated = periodIncome - totalBudget - extraDebt - extraFunds;
+
+    // Removed: Unspent amount (redundant)
+
+    // Build breakdown list for chart
+  final breakdownList = useSnaps
+    ? snaps.values
+            .map((s) => CategoryBreakdown(
+                  name: s.categoryName,
+                  spent: 0,
+                  limit: s.budgetLimit,
+                  categoryId: s.categoryId,
+                ))
+            .toList()
+        : categories
+            .map((c) => CategoryBreakdown(
+                  name: c.name,
+                  spent: 0,
+                  limit: c.budgetLimit,
+                  categoryId: c.id,
+                ))
+            .toList();
+
+    // Spending by category for the selected period (exclude debt and funds categories)
+    final start = _periodStartFor(selectedMonth);
+    final end = _periodUpperBoundExclusive(start);
+    final spendingList = (useSnaps
+            ? snaps.values
+                .where((x) => !debtCatIds.contains(x.categoryId) && !fundCatIds.contains(x.categoryId))
+                .map((s) => CategoryBreakdown(
+                      name: s.categoryName,
+                      spent: (_spendingByPeriod[DateTime(ps.year, ps.month, ps.day)] ?? const {})[s.categoryId] ?? 0.0,
+                      limit: s.budgetLimit,
+                      categoryId: s.categoryId,
+                    ))
+                .toList()
+            : categories
+                .where((c) => c.id != null && !debtCatIds.contains(c.id!) && !fundCatIds.contains(c.id!))
+                .map((c) => CategoryBreakdown(
+                      name: c.name,
+                      spent: 0,
+                      limit: c.budgetLimit,
+                      categoryId: c.id,
+                    ))
+                .toList())
+        .map((cb) {
+      if (isClosed) {
+        return CategoryBreakdown(
+          name: cb.name,
+          spent: cb.spent,
+          limit: cb.limit,
+          categoryId: cb.categoryId,
+        );
+      }
+      double spent = 0;
+      for (final t in transactions) {
+        if (t.categoryId == cb.categoryId && !t.date.isBefore(start) && t.date.isBefore(end)) {
+          if (t.amount > 0) spent += t.amount;
+        }
+      }
+      return CategoryBreakdown(
+        name: cb.name,
+        spent: spent,
+        limit: cb.limit,
+        categoryId: cb.categoryId,
+      );
+    }).toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Report'),
+        actions: [
+          PopupMenuButton<String>(
+            tooltip: 'More',
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'close',
+                child: ListTile(leading: Icon(Icons.task_alt), title: Text('Close period')),
+              ),
+              const PopupMenuItem(
+                value: 'notif_enable',
+                child: ListTile(leading: Icon(Icons.notification_important), title: Text('Enable notifications')),
+              ),
+              if (isClosed)
+                const PopupMenuItem(
+                  value: 'edit_budget',
+                  child: ListTile(leading: Icon(Icons.tune), title: Text('Edit period budget')),
+                ),
+              if (isClosed)
+                const PopupMenuItem(
+                  value: 'edit_income',
+                  child: ListTile(leading: Icon(Icons.payments), title: Text('Edit period income')),
+                ),
+              if (isClosed)
+                const PopupMenuItem(
+                  value: 'reopen',
+                  child: ListTile(leading: Icon(Icons.lock_open), title: Text('Reopen period')),
+                ),
+              const PopupMenuItem(
+                value: 'guide',
+                child: ListTile(leading: Icon(Icons.help_outline), title: Text('User guide')),
+              ),
+            ],
+            onSelected: (value) async {
+              switch (value) {
+                case 'close':
+                  await PeriodService.closeActivePeriod(context);
+                  break;
+                case 'notif_enable':
+                  await NotificationService.instance.init();
+                  final ok = await NotificationService.instance.requestPermissions();
+                  if (!ok && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: const Text('Permission denied. Open system settings to enable notifications.'),
+                        action: SnackBarAction(label: 'Open', onPressed: () => NotificationService.instance.openSystemSettings()),
+                      ),
+                    );
+                  } else if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications enabled.')));
+                  }
+                  break;
+                case 'edit_budget':
+                  await _editBudgetForPeriodFlow();
+                  break;
+                case 'edit_income':
+                  await _editIncomeForPeriodFlow();
+                  break;
+                case 'reopen':
+                  await _reopenPeriodFlow();
+                  break;
+                case 'guide':
+                  await showUserGuide(context);
+                  break;
+              }
+            },
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Scrollbar(
+          controller: _reportScroll,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _reportScroll,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              // Period header and actions (responsive, avoids horizontal overflow)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Previous period',
+                        icon: const Icon(Icons.chevron_left),
+                        onPressed: _goToPreviousPeriod,
+                      ),
+                      Expanded(
+                        child: Text(
+                          _formatPeriodRange(ps),
+                          style: Theme.of(context).textTheme.titleMedium,
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Next period',
+                        icon: const Icon(Icons.chevron_right),
+                        onPressed: _goToNextPeriod,
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: _showJumpToPeriod,
+                        icon: const Icon(Icons.calendar_today),
+                        label: const Text('Jump'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // Budget summary
+              Text('Budget Summary', style: Theme.of(context).textTheme.titleMedium),
+              SizedBox(
+                width: double.infinity,
+                child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Builder(builder: (_) {
+                    final int incomeCents = (periodIncome * 100).round();
+                    final int budgetCents = (totalBudget * 100).round();
+                    final int unallocatedCents = (unallocated * 100).round();
+                    final hasIncome = incomeCents > 0;
+                    final hasBudget = budgetCents > 0;
+                    final isNoIncomeButBudgeted = !hasIncome && hasBudget;
+                    final isOverBudgeted = unallocatedCents < 0;
+                    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const SizedBox(height: 4),
+                      Text('Total Income: ₹${(incomeCents / 100).toStringAsFixed(2)}'),
+                      Text('Total Budgeted: ₹${(budgetCents / 100).toStringAsFixed(2)}'),
+                      const SizedBox(height: 4),
+                      if (isNoIncomeButBudgeted) ...[
+                        const Text('No income declared',
+                            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        const Text('Tip: Add income sources under Budget.',
+                            style: TextStyle(fontSize: 12, color: Colors.orange)),
+                      ] else if (isOverBudgeted) ...[
+                        Text('Overbudgeted by ₹${(-unallocatedCents / 100).toStringAsFixed(2)}',
+                            style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Tip: Reduce some category limits until your total budgeted amount is at or below your income.',
+                          style: TextStyle(fontSize: 12, color: Colors.orange),
+                        ),
+                      ] else ...[
+                        Text('Unallocated: ₹${(unallocatedCents / 100).toStringAsFixed(2)}',
+                            style: TextStyle(
+                                color: unallocatedCents == 0 ? Colors.green : Colors.orange,
+                                fontWeight: FontWeight.bold)),
+                      ],
+                      const SizedBox(height: 4),
+                    ]);
+                  }),
+                ),
+              ),
+            ),
+
+              const SizedBox(height: 10),
+
+              // Allocation chart
+              Text('Budget Allocation', style: Theme.of(context).textTheme.titleMedium),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: BudgetAllocationChart(
+                    breakdown: breakdownList,
+                    unallocatedAmount: unallocated > 0 ? unallocated : 0.0,
+                    onSliceTap: (data) => _showCategoryDetails(context, data),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Spending by Category (restored)
+              if (spendingList.isEmpty)
+                const Center(child: Text('No categories available. Add a category to view reports.'))
+              else ...[
+                Text('Spending by Category', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 6),
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: spendingList.length,
+                  itemBuilder: (context, index) {
+                    final cat = spendingList[index];
+                    final remaining = cat.limit - cat.spent;
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Row(children: [
+                            Expanded(
+                              child: Text(cat.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                            Text(
+                              '₹${cat.spent.toStringAsFixed(0)} / ₹${cat.limit.toStringAsFixed(0)}',
+                              style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                          ]),
+                          const SizedBox(height: 8),
+                          ThermometerBar(
+                            value: cat.spent,
+                            max: cat.limit <= 0 ? 1 : cat.limit,
+                            color: Colors.deepPurple,
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('Spent: ₹${cat.spent.toStringAsFixed(2)}'),
+                              Text(
+                                'Remaining: ₹${remaining.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  color: remaining < 0 ? Colors.red : Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ]),
+                      ),
+                    );
+                  },
+                ),
+              ],
+
+              const SizedBox(height: 16),
+
+              // Savings contributions
+              if (sinkingFunds.isNotEmpty) ...[
+                Text('Savings Contributions', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 6),
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: sinkingFunds.length,
+                  itemBuilder: (context, index) {
+                    final fund = sinkingFunds[index];
+                    final contributed = _contributedThisMonthFor(fund);
+                    final delta = contributed - fund.monthlyContribution;
+                    final progress = fund.targetAmount <= 0
+                        ? 0.0
+                        : (fund.balance / fund.targetAmount).clamp(0.0, 1.0);
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Row(children: [
+                            Expanded(child: Text(fund.name, style: const TextStyle(fontWeight: FontWeight.bold))),
+                            const SizedBox(width: 8),
+                            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                              const Text('Δ vs Plan', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                              Text('₹${delta.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                      color: delta >= 0 ? Colors.green : Colors.red,
+                                      fontWeight: FontWeight.bold)),
+                            ]),
+                          ]),
+                          const SizedBox(height: 6),
+                          Text(
+                              'Monthly: ₹${fund.monthlyContribution.toStringAsFixed(2)} | Contributed: ₹${contributed.toStringAsFixed(2)}'),
+                          const SizedBox(height: 6),
+                          Text('Progress: ₹${fund.balance.toStringAsFixed(2)} / ₹${fund.targetAmount.toStringAsFixed(2)}',
+                              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          const SizedBox(height: 6),
+                          LinearProgressIndicator(value: progress),
+                        ]),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              // Debt payments
+              Builder(builder: (_) {
+                final periodLiabilities = _liabilitiesForPeriod();
+                if (periodLiabilities.isEmpty) return const SizedBox.shrink();
+                return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  Text('Debt Payments', style: Theme.of(context).textTheme.titleMedium),
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: periodLiabilities.length,
+                    itemBuilder: (context, index) {
+                      final liab = periodLiabilities[index];
+                      final paid = _paidThisMonthFor(liab);
+                      final delta = paid - liab.planned;
+                      return Card(
+                        child: ListTile(
+                          title: Text(liab.name),
+                          subtitle: Text('Min: ₹${liab.planned.toStringAsFixed(2)} | Paid: ₹${paid.toStringAsFixed(2)}'),
+                          trailing: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                            const Text('Δ vs Plan'),
+                            Text('₹${delta.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                    color: delta >= 0 ? Colors.green : Colors.red,
+                                    fontWeight: FontWeight.bold)),
+                          ]),
+                        ),
+                      );
+                    },
+                  ),
+                ]);
+              }),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _loadData() async {
     try {
       final cats = await RMinderDatabase.instance.getCategories();
@@ -138,6 +628,13 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
         // Also load income snapshot sum for this closed period
         final totalInc = await RMinderDatabase.instance.getIncomeSnapshotSumFor(p);
         incomeSums[DateTime(p.year, p.month, p.day)] = totalInc;
+        // Load additional snapshots
+        final spendMap = await RMinderDatabase.instance.getSpendingSnapshotMapFor(p);
+        _spendingByPeriod[DateTime(p.year, p.month, p.day)] = spendMap;
+        final liabSnaps = await RMinderDatabase.instance.getLiabilitySnapshotsFor(p);
+        _liabSnapsByPeriod[DateTime(p.year, p.month, p.day)] = liabSnaps;
+        final fundSnaps = await RMinderDatabase.instance.getFundSnapshotsFor(p);
+        _fundSnapsByPeriod[DateTime(p.year, p.month, p.day)] = fundSnaps;
       }
       if (!mounted) return;
       setState(() {
@@ -182,6 +679,17 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
           selectedMonth = _activePeriodStart!;
         }
       });
+      // Load one-time carry-forward income for the active period (if any)
+      try {
+        final s = _activePeriodStart!;
+        final key = 'carry_income:${s.year.toString().padLeft(4, '0')}-${s.month.toString().padLeft(2, '0')}-${s.day.toString().padLeft(2, '0')}'
+            ;
+        final str = await RMinderDatabase.instance.getSetting(key);
+        final val = double.tryParse(str ?? '0') ?? 0.0;
+        if (mounted) {
+          setState(() => _activeCarryIncome = val);
+        }
+      } catch (_) {}
     } catch (e, st) {
       logError(e, st);
     }
@@ -217,551 +725,14 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
 
   // Build the list of period anchors (start dates) used for navigation
   List<DateTime> _allowedPeriods() {
-    final closedPeriods = _closedMonths.map((d) => DateTime(d.year, d.month, d.day)).toSet();
-    final currentAnchor = DateTime(selectedMonth.year, selectedMonth.month, selectedMonth.day);
-    final set = {...closedPeriods, currentAnchor};
-    // Always include the active period start so users can navigate back to it
+    // Include all closed period starts and the current active period start
+    final set = _closedMonths.map((d) => DateTime(d.year, d.month, d.day)).toSet();
     if (_activePeriodStart != null) {
-      final activeDate = DateTime(_activePeriodStart!.year, _activePeriodStart!.month, _activePeriodStart!.day);
-      set.add(activeDate);
+      set.add(DateTime(_activePeriodStart!.year, _activePeriodStart!.month, _activePeriodStart!.day));
     }
-    final list = set.toList()..sort((a, b) => a.compareTo(b));
+    final list = set.toList();
+    list.sort((a, b) => b.compareTo(a)); // newest first
     return list;
-  }
-
-  // Get liabilities appropriate for the selected period:
-  // - For active period: exclude archived
-  // - For closed periods: include all (to show historical data)
-  List<models.Liability> _liabilitiesForPeriod() {
-    final ps = _periodStartFor(selectedMonth);
-    final isClosed = _isClosedPeriod(ps);
-    if (isClosed) {
-      return liabilities; // show all including archived for historical accuracy
-    } else {
-      return liabilities.where((l) => !l.isArchived).toList(); // exclude archived from active period
-    }
-  }
-
-  MonthlySummary getMonthlySummary() {
-    final periodLiabilities = _liabilitiesForPeriod();
-    final debtCategoryIds = periodLiabilities.map((l) => l.budgetCategoryId).toSet();
-    final fundCategoryIds = sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
-    final excludedCategoryIds = {...debtCategoryIds, ...fundCategoryIds};
-    final Map<int, double> spentByCategoryThisMonth = {};
-    final periodStart = _periodStartFor(selectedMonth);
-    final periodEnd = _periodUpperBoundExclusive(periodStart);
-    for (final txn in transactions) {
-      // Include transactions in [periodStart, periodEnd)
-      if (!txn.date.isBefore(periodStart) && txn.date.isBefore(periodEnd)) {
-        if (excludedCategoryIds.contains(txn.categoryId)) continue;
-        spentByCategoryThisMonth.update(txn.categoryId, (v) => v + txn.amount, ifAbsent: () => txn.amount);
-      }
-    }
-    double totalSpent = 0;
-    double totalLimit = 0;
-    List<CategoryBreakdown> breakdown = [];
-    final bool closed = _isClosedPeriod(periodStart);
-    final snapshots = closed ? _snapshotsByPeriod[DateTime(periodStart.year, periodStart.month, periodStart.day)] : null;
-
-    if (closed && snapshots != null && snapshots.isNotEmpty) {
-      // Build strictly from snapshots to reflect historical budgets accurately
-      final sorted = snapshots.values.toList()
-        ..sort((a, b) => a.categoryName.toLowerCase().compareTo(b.categoryName.toLowerCase()));
-      for (final snap in sorted) {
-        if (excludedCategoryIds.contains(snap.categoryId)) continue;
-        final spent = spentByCategoryThisMonth[snap.categoryId] ?? 0;
-        totalSpent += spent;
-        totalLimit += snap.budgetLimit;
-        breakdown.add(CategoryBreakdown(name: snap.categoryName, spent: spent, limit: snap.budgetLimit, categoryId: snap.categoryId));
-      }
-    } else {
-      // Fall back to current categories (open period or no snapshots found)
-      for (final cat in categories) {
-        if (cat.id == null) continue;
-        if (excludedCategoryIds.contains(cat.id)) continue;
-        final spent = spentByCategoryThisMonth[cat.id!] ?? 0;
-        totalSpent += spent;
-        totalLimit += cat.budgetLimit;
-        breakdown.add(CategoryBreakdown(name: cat.name, spent: spent, limit: cat.budgetLimit, categoryId: cat.id));
-      }
-    }
-    return MonthlySummary(
-      totalSpent: totalSpent,
-      totalLimit: totalLimit,
-      totalRemaining: totalLimit - totalSpent,
-      breakdown: breakdown,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context); // Required by AutomaticKeepAliveClientMixin
-    final summary = getMonthlySummary();
-    final periods = _allowedPeriods();
-    if (!periods.any((p) => _sameDay(p, selectedMonth))) {
-      // If selectedMonth is not in the allowed periods list, default to active period
-      selectedMonth = _activePeriodStart ?? (periods.isNotEmpty ? periods.last : DateTime.now());
-    }
-    final int currentIndex = periods.indexWhere((p) => _sameDay(p, selectedMonth));
-    final bool canGoPrev = currentIndex > 0;
-    final bool canGoNext = currentIndex >= 0 && currentIndex < periods.length - 1;
-    return Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        title: Row(
-          mainAxisSize: MainAxisSize.max,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            IconButton(
-              tooltip: 'Previous Period',
-              icon: const Icon(Icons.chevron_left),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              onPressed: canGoPrev
-                  ? () => setState(() {
-                        selectedMonth = periods[currentIndex - 1];
-                      })
-                  : null,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: InkWell(
-                onTap: _showJumpToPeriod,
-                borderRadius: BorderRadius.circular(6),
-                child: Text(
-                  _formatPeriodRange(_periodStartFor(selectedMonth)),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              tooltip: 'Next Period',
-              icon: const Icon(Icons.chevron_right),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              onPressed: canGoNext
-                  ? () => setState(() {
-                        selectedMonth = periods[currentIndex + 1];
-                      })
-                  : null,
-            ),
-          ],
-        ),
-        centerTitle: true,
-        actions: [
-          PopupMenuButton<String>(
-            tooltip: 'More',
-            itemBuilder: (ctx) {
-              final periodStart = _periodStartFor(selectedMonth);
-              final isClosed = _isClosedPeriod(periodStart);
-              return [
-                if (!isClosed)
-                  const PopupMenuItem(
-                    value: 'close',
-                    child: ListTile(
-                      leading: Icon(Icons.task_alt),
-                      title: Text('Close period'),
-                    ),
-                  ),
-                if (isClosed)
-                  const PopupMenuItem(
-                    value: 'edit-budget',
-                    child: ListTile(
-                      leading: Icon(Icons.tune),
-                      title: Text('Edit period budget'),
-                    ),
-                  ),
-                if (isClosed)
-                  const PopupMenuItem(
-                    value: 'edit-income',
-                    child: ListTile(
-                      leading: Icon(Icons.edit),
-                      title: Text('Edit period income'),
-                    ),
-                  ),
-                if (isClosed)
-                  const PopupMenuItem(
-                    value: 'reopen',
-                    child: ListTile(
-                      leading: Icon(Icons.lock_open),
-                      title: Text('Reopen period'),
-                    ),
-                  ),
-              ];
-            },
-            onSelected: (value) async {
-              if (value == 'close') {
-                await _closeMonthFlow();
-              } else if (value == 'edit-budget') {
-                await _editBudgetForPeriodFlow();
-              } else if (value == 'edit-income') {
-                await _editIncomeForPeriodFlow();
-              } else if (value == 'reopen') {
-                await _reopenPeriodFlow();
-              }
-            },
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: SingleChildScrollView(
-          controller: _reportScroll,
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 720),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Text('Monthly Summary', style: Theme.of(context).textTheme.headlineSmall),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Builder(builder: (_) {
-                      // Compute Unallocated for the selected period, including extras beyond planned
-                      // Use cents to avoid floating-point rounding issues.
-                      final ps = _periodStartFor(selectedMonth);
-                      final pe = _periodUpperBoundExclusive(ps);
-                      final isClosed = _isClosedPeriod(ps);
-                      final snaps = isClosed ? _snapshotsByPeriod[DateTime(ps.year, ps.month, ps.day)] : null;
-
-            // Income: use snapshot sum for closed periods; current income for active
-            final double totalIncome = isClosed
-              ? (_incomeSumByPeriod[DateTime(ps.year, ps.month, ps.day)] ?? 0.0)
-              : incomeSources.fold<double>(0, (s, i) => s + i.amount);
-
-                      // Base budgeted: from snapshots when closed, otherwise current categories
-                      final double baseBudgeted = snaps != null && snaps.isNotEmpty
-                          ? snaps.values.fold<double>(0, (s, x) => s + x.budgetLimit)
-                          : categories.fold<double>(0, (s, c) => s + c.budgetLimit);
-
-                      // Identify debt and fund category IDs for this period
-                      final periodLiabs = _liabilitiesForPeriod();
-                      final Set<int> debtCatIds = periodLiabs.map((l) => l.budgetCategoryId).toSet();
-                      final Set<int> fundCatIds =
-                          sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
-
-                      // Planned totals for debts/funds (aligned with how baseBudgeted was computed)
-                      double plannedDebt = 0;
-                      double plannedFunds = 0;
-                      if (snaps != null && snaps.isNotEmpty) {
-                        for (final s in snaps.values) {
-                          if (debtCatIds.contains(s.categoryId)) plannedDebt += s.budgetLimit;
-                          if (fundCatIds.contains(s.categoryId)) plannedFunds += s.budgetLimit;
-                        }
-                      } else {
-                        for (final c in categories) {
-                          if (c.id == null) continue;
-                          if (debtCatIds.contains(c.id)) plannedDebt += c.budgetLimit;
-                          if (fundCatIds.contains(c.id)) plannedFunds += c.budgetLimit;
-                        }
-                      }
-
-                      // Actual payments/contributions in this period
-                      double paidDebt = 0;
-                      double contributedFunds = 0;
-                      for (final t in transactions) {
-                        if (!t.date.isBefore(ps) && t.date.isBefore(pe)) {
-                          if (debtCatIds.contains(t.categoryId)) paidDebt += t.amount;
-                          // Only count positive amounts as contributions (ignore withdrawals)
-                          if (fundCatIds.contains(t.categoryId) && t.amount > 0) contributedFunds += t.amount;
-                        }
-                      }
-
-                      // Extras beyond plan (only count net extra, not underpayments)
-                      final double extraDebt = paidDebt > plannedDebt ? (paidDebt - plannedDebt) : 0.0;
-                      final double extraFunds = contributedFunds > plannedFunds ? (contributedFunds - plannedFunds) : 0.0;
-                      final double effectiveBudgeted = baseBudgeted + extraDebt + extraFunds;
-
-                      final int incomeCents = (totalIncome * 100).round();
-                      final int budgetCents = (effectiveBudgeted * 100).round();
-                      final int unallocatedCents = incomeCents - budgetCents; // positive => unallocated
-                      final hasIncome = incomeCents > 0;
-                      final hasBudget = budgetCents > 0;
-                      final isNoIncomeButBudgeted = !hasIncome && hasBudget;
-                      final isOverBudgeted = hasIncome && budgetCents > incomeCents;
-
-                      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('Budget Summary', style: Theme.of(context).textTheme.titleMedium),
-                        const SizedBox(height: 4),
-                        Text('Total Income: ₹${(incomeCents / 100).toStringAsFixed(2)}'),
-                        Text('Total Budgeted: ₹${(budgetCents / 100).toStringAsFixed(2)}'),
-
-                        if (isNoIncomeButBudgeted) ...[
-                          const SizedBox(height: 4),
-                          const Text(
-                            'No income declared',
-                            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Tip: Add income sources under Budget.',
-                            style: TextStyle(fontSize: 12, color: Colors.orange),
-                          ),
-                        ] else if (isOverBudgeted) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            'Overbudgeted by ₹${((budgetCents - incomeCents) / 100).toStringAsFixed(2)}',
-                            style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Tip: Reduce some category limits until your total budgeted amount is at or below your income.',
-                            style: TextStyle(fontSize: 12, color: Colors.orange),
-                          ),
-                        ] else ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            'Unallocated: ₹${(unallocatedCents / 100).toStringAsFixed(2)}',
-                            style: TextStyle(
-                              color: unallocatedCents == 0 ? Colors.green : Colors.orange,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          if (unallocatedCents != 0)
-                            const Padding(
-                              padding: EdgeInsets.only(top: 4.0),
-                              child: Text(
-                                'Tip: Go to the budget page to give your money a purpose.',
-                                style: TextStyle(fontSize: 12, color: Colors.orange),
-                              ),
-                            ),
-                        ],
-                      ]);
-                    }),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text('Budget Allocation', style: Theme.of(context).textTheme.titleMedium),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Builder(builder: (_) {
-                      final ps = _periodStartFor(selectedMonth);
-                      final pe = _periodUpperBoundExclusive(ps);
-                      final isClosed = _isClosedPeriod(ps);
-                      final snaps = isClosed ? _snapshotsByPeriod[DateTime(ps.year, ps.month, ps.day)] : null;
-                      final useSnaps = snaps != null && snaps.isNotEmpty;
-            final breakdownList = useSnaps
-              ? snaps.values
-                              .map((s) => CategoryBreakdown(
-                                    name: s.categoryName,
-                                    spent: 0,
-                                    limit: s.budgetLimit,
-                                    categoryId: s.categoryId,
-                                  ))
-                              .toList()
-                          : categories
-                              .map((c) => CategoryBreakdown(
-                                    name: c.name,
-                                    spent: 0,
-                                    limit: c.budgetLimit,
-                                    categoryId: c.id,
-                                  ))
-                              .toList();
-            final income = isClosed
-              ? (_incomeSumByPeriod[DateTime(ps.year, ps.month, ps.day)] ?? 0.0)
-              : incomeSources.fold<double>(0, (s, i) => s + i.amount);
-                      final baseBudgeted = useSnaps
-                          ? snaps.values.fold<double>(0, (s, x) => s + x.budgetLimit)
-                          : categories.fold<double>(0, (s, c) => s + c.budgetLimit);
-
-                      // Compute extras similar to the summary box
-                      final periodLiabs = _liabilitiesForPeriod();
-                      final Set<int> debtCatIds = periodLiabs.map((l) => l.budgetCategoryId).toSet();
-                      final Set<int> fundCatIds =
-                          sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
-
-                      double plannedDebt = 0;
-                      double plannedFunds = 0;
-                      if (useSnaps) {
-                        for (final s in snaps.values) {
-                          if (debtCatIds.contains(s.categoryId)) plannedDebt += s.budgetLimit;
-                          if (fundCatIds.contains(s.categoryId)) plannedFunds += s.budgetLimit;
-                        }
-                      } else {
-                        for (final c in categories) {
-                          if (c.id == null) continue;
-                          if (debtCatIds.contains(c.id)) plannedDebt += c.budgetLimit;
-                          if (fundCatIds.contains(c.id)) plannedFunds += c.budgetLimit;
-                        }
-                      }
-
-                      double paidDebt = 0;
-                      double contributedFunds = 0;
-                      for (final t in transactions) {
-                        if (!t.date.isBefore(ps) && t.date.isBefore(pe)) {
-                          if (debtCatIds.contains(t.categoryId)) paidDebt += t.amount;
-                          // Only count positive amounts as contributions (ignore withdrawals)
-                          if (fundCatIds.contains(t.categoryId) && t.amount > 0) contributedFunds += t.amount;
-                        }
-                      }
-                      final double extraDebt = paidDebt > plannedDebt ? (paidDebt - plannedDebt) : 0.0;
-                      final double extraFunds = contributedFunds > plannedFunds ? (contributedFunds - plannedFunds) : 0.0;
-
-                      final effectiveBudgeted = baseBudgeted + extraDebt + extraFunds;
-                      final int unallocCents = ((income - effectiveBudgeted) * 100).round();
-                      final unalloc = unallocCents > 0 ? unallocCents / 100.0 : 0.0;
-                      return BudgetAllocationChart(
-                        breakdown: breakdownList,
-                        unallocatedAmount: unalloc,
-                        onSliceTap: (data) => _showCategoryDetails(context, data),
-                      );
-                    }),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                if (summary.breakdown.isEmpty)
-                  const Center(child: Text('No categories available. Add a category to view reports.'))
-                else ...[
-                  Text('Spending by Category', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 6),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: summary.breakdown.length,
-                    itemBuilder: (context, index) {
-                      final cat = summary.breakdown[index];
-                      final remaining = cat.limit - cat.spent;
-                      return Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(cat.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                ),
-                                Text(
-                                  '₹${cat.spent.toStringAsFixed(0)} / ₹${cat.limit.toStringAsFixed(0)}',
-                                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            ThermometerBar(
-                              value: cat.spent,
-                              max: cat.limit <= 0 ? 1 : cat.limit,
-                              color: Colors.deepPurple,
-                            ),
-                            const SizedBox(height: 6),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text('Spent: ₹${cat.spent.toStringAsFixed(2)}'),
-                                Text(
-                                  'Remaining: ₹${remaining.toStringAsFixed(2)}',
-                                  style: TextStyle(
-                                    color: remaining < 0 ? Colors.red : Colors.green,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ]),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-                const SizedBox(height: 16),
-                if (sinkingFunds.isNotEmpty) ...[
-                  Text('Savings Contributions', style: Theme.of(context).textTheme.titleMedium),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: sinkingFunds.length,
-                    itemBuilder: (context, index) {
-                      final fund = sinkingFunds[index];
-                      final contributed = _contributedThisMonthFor(fund);
-                      final delta = contributed - fund.monthlyContribution;
-                      final progress = fund.targetAmount <= 0
-                          ? 0.0
-                          : (fund.balance / fund.targetAmount).clamp(0.0, 1.0);
-                      return Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(child: Text(fund.name, style: const TextStyle(fontWeight: FontWeight.bold))),
-                                  const SizedBox(width: 8),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      const Text('Δ vs Plan', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                                      Text(
-                                        '₹${delta.toStringAsFixed(2)}',
-                                        style: TextStyle(
-                                          color: delta >= 0 ? Colors.green : Colors.red,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              Text('Monthly: ₹${fund.monthlyContribution.toStringAsFixed(2)} | Contributed: ₹${contributed.toStringAsFixed(2)}'),
-                              const SizedBox(height: 6),
-                              Text('Progress: ₹${fund.balance.toStringAsFixed(2)} / ₹${fund.targetAmount.toStringAsFixed(2)}',
-                                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                              const SizedBox(height: 6),
-                              LinearProgressIndicator(value: progress),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-                const SizedBox(height: 16),
-                Builder(builder: (_) {
-                  final periodLiabilities = _liabilitiesForPeriod();
-                  if (periodLiabilities.isEmpty) return const SizedBox.shrink();
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text('Debt Payments', style: Theme.of(context).textTheme.titleMedium),
-                      ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: periodLiabilities.length,
-                        itemBuilder: (context, index) {
-                          final liab = periodLiabilities[index];
-                          final paid = _paidThisMonthFor(liab);
-                          final delta = paid - liab.planned;
-                          return Card(
-                            child: ListTile(
-                              title: Text(liab.name),
-                              subtitle: Text('Min: ₹${liab.planned.toStringAsFixed(2)} | Paid: ₹${paid.toStringAsFixed(2)}'),
-                              trailing: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                                const Text('Δ vs Plan'),
-                                Text(
-                                  '₹${delta.toStringAsFixed(2)}',
-                                  style: TextStyle(
-                                    color: delta >= 0 ? Colors.green : Colors.red,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ]),
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  );
-                }),
-              ]),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   Future<void> _editBudgetForPeriodFlow() async {
@@ -1041,230 +1012,7 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
     return total;
   }
 
-  Future<void> _closeMonthFlow() async {
-    // User-driven close: allow closing the currently selected period at any time.
-
-    final alreadyClosed = await RMinderDatabase.instance.isMonthClosed(selectedMonth);
-    if (alreadyClosed) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${_monthName(selectedMonth.month)} ${selectedMonth.year} is already closed.')),
-      );
-      return;
-    }
-
-    // Only check active (non-archived) liabilities for minimum payment requirement
-    final activeLiabilities = liabilities.where((l) => !l.isArchived).toList();
-    final List<Map<String, dynamic>> minShortfalls = [];
-    for (final liab in activeLiabilities) {
-      final paid = _paidThisMonthFor(liab);
-      final remaining = (liab.planned - paid);
-      if (remaining > 0.01) {
-        minShortfalls.add({'name': liab.name, 'remaining': remaining});
-      }
-    }
-    if (minShortfalls.isNotEmpty) {
-      if (!mounted) return;
-      await showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Minimum payments required'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Before closing ${_monthName(selectedMonth.month)} ${selectedMonth.year}, please complete the minimum payments:'),
-              const SizedBox(height: 8),
-              ...minShortfalls.map((m) => Text('${m['name']}: ₹${(m['remaining'] as double).toStringAsFixed(2)} remaining')),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-          ],
-        ),
-      );
-      return;
-    }
-
-  final debtCategoryIds = liabilities.map((l) => l.budgetCategoryId).toSet();
-    final fundCategoryIds = sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
-    final excludedCategoryIds = {...debtCategoryIds, ...fundCategoryIds};
-    final Map<int, double> spentByCategoryThisMonth = {};
-  final periodStart = _periodStartFor(selectedMonth);
-  // Closing the period today; include transactions up to end of today (exclusive boundary at tomorrow)
-  final today = DateTime.now();
-  final periodEnd = DateTime(today.year, today.month, today.day).add(const Duration(days: 1));
-    for (final txn in transactions) {
-      if (!txn.date.isBefore(periodStart) && txn.date.isBefore(periodEnd)) {
-        if (excludedCategoryIds.contains(txn.categoryId)) continue;
-        spentByCategoryThisMonth.update(txn.categoryId, (v) => v + txn.amount, ifAbsent: () => txn.amount);
-      }
-    }
-    final List<models.BudgetCategory> regularCats = categories
-        .where((c) => c.id != null && !excludedCategoryIds.contains(c.id))
-        .toList();
-    final Map<models.BudgetCategory, double> leftoverByCat = {
-      for (final c in regularCats)
-        c: (c.budgetLimit - (spentByCategoryThisMonth[c.id] ?? 0)).clamp(0, double.infinity)
-    };
-    final double totalLeftover = leftoverByCat.values.fold(0.0, (s, v) => s + v);
-    if (totalLeftover <= 0) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No unspent money to close for this month.')));
-      return;
-    }
-
-    CloseAction mode = CloseAction.carryForward;
-    models.Liability? selectedLiab = activeLiabilities.isNotEmpty ? activeLiabilities.first : null;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Close Month'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Month: ${_monthName(selectedMonth.month)} ${selectedMonth.year}'),
-              const SizedBox(height: 8),
-              Text('Total unspent across categories: ₹${totalLeftover.toStringAsFixed(2)}'),
-              const SizedBox(height: 8),
-              const Text('Choose what to do with unspent money:'),
-              const SizedBox(height: 6),
-              RadioListTile<CloseAction>(
-                value: CloseAction.carryForward,
-                groupValue: mode,
-                onChanged: (v) => setLocal(() => mode = v ?? mode),
-                title: const Text('Carry forward to next month'),
-                subtitle: const Text('Add leftover as extra available amount next month.'),
-              ),
-              RadioListTile<CloseAction>(
-                value: CloseAction.payDebt,
-                groupValue: mode,
-                onChanged: activeLiabilities.isEmpty ? null : (v) => setLocal(() => mode = v ?? mode),
-                title: const Text('Use unspent to pay debt'),
-                subtitle: activeLiabilities.isEmpty
-                    ? const Text('No liabilities added')
-                    : DropdownButton<models.Liability>(
-                        value: selectedLiab,
-                        isExpanded: true,
-                        items: activeLiabilities
-                            .map((l) => DropdownMenuItem(value: l, child: Text(l.name)))
-                            .toList(),
-                        onChanged: (l) => setLocal(() => selectedLiab = l),
-                      ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Confirm')),
-          ],
-        ),
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    try {
-      // When closing on Oct 17, we close the period up to Oct 16 (yesterday)
-      // and start a new period from Oct 17 (today)
-      final today = DateTime.now();
-      final todayDate = DateTime(today.year, today.month, today.day);
-      final yesterday = todayDate.subtract(const Duration(days: 1));
-      final nextStart = todayDate; // New period starts today
-      // Snapshot current budgets for this closing period so historical reports show the original limits
-      await RMinderDatabase.instance.saveBudgetSnapshotForPeriod(periodStart, categories);
-  // Snapshot current income sources for this closing period
-  await RMinderDatabase.instance.saveIncomeSnapshotForPeriod(periodStart, incomeSources);
-      
-      // Auto-archive liabilities that are paid off (balance <= 0)
-      for (final liab in activeLiabilities) {
-        if (liab.balance <= 0 && !liab.isArchived) {
-          await RMinderDatabase.instance.updateLiability(models.Liability(
-            id: liab.id,
-            name: liab.name,
-            balance: liab.balance,
-            planned: liab.planned,
-            budgetCategoryId: liab.budgetCategoryId,
-            isArchived: true,
-          ));
-        }
-      }
-      
-      if (mode == CloseAction.carryForward) {
-        for (final entry in leftoverByCat.entries) {
-          final leftover = entry.value;
-          if (leftover <= 0) continue;
-          final cat = entry.key;
-          // Record carry-forward on yesterday (the last day of the closing period)
-          // This shows the unspent amount as used in the closed period report
-          final carryForwardDate = yesterday;
-          await RMinderDatabase.instance.insertTransaction(models.Transaction(
-            categoryId: cat.id!,
-            amount: leftover,
-            date: carryForwardDate,
-            note: 'Carry forward to ${_monthName(nextStart.month)} ${nextStart.year}',
-          ));
-        }
-        await RMinderDatabase.instance.insertClosedMonth(
-          monthStart: periodStart,
-          action: 'carryForward',
-          closedAt: yesterday, // Period ends yesterday, new period starts today
-        );
-        // Update database BEFORE setState to ensure persistence before UI update
-        await RMinderDatabase.instance.setActivePeriodStart(nextStart);
-  await _loadData();
-        if (!mounted) return;
-        setState(() {
-          selectedMonth = nextStart;
-          _activePeriodStart = nextStart;
-        });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Carried forward unspent to next period.')));
-        }
-      } else {
-        final liab = selectedLiab;
-        if (liab == null) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please add/select a liability.')));
-          }
-          return;
-        }
-        // Record payment on yesterday (the last day of the closing period)
-        // Closing on Oct 17 means the period ends Oct 16, so payment is dated Oct 16
-        final paymentDate = yesterday;
-        await RMinderDatabase.instance.insertTransaction(models.Transaction(
-          categoryId: liab.budgetCategoryId,
-          amount: totalLeftover,
-          date: paymentDate,
-          note: 'Period close payment (${_monthName(selectedMonth.month)} ${selectedMonth.year}) - ${liab.name}',
-        ));
-        await RMinderDatabase.instance.insertClosedMonth(
-          monthStart: periodStart,
-          action: 'payDebt',
-          closedAt: yesterday, // Period ends yesterday, new period starts today
-        );
-        // Update database BEFORE setState to ensure persistence before UI update
-        await RMinderDatabase.instance.setActivePeriodStart(nextStart);
-        await _loadData();
-        if (!mounted) return;
-        setState(() {
-          selectedMonth = nextStart;
-          _activePeriodStart = nextStart;
-        });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Debt payment recorded; tracking advanced to next period.')));
-        }
-      }
-    } catch (e, st) {
-      logError(e, st);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to close month. Please try again.')));
-      }
-    }
-  }
+  // Legacy local close flow removed; global close is handled by PeriodService via AppBar action
 
   Future<void> _showCategoryDetails(BuildContext context, CategoryBreakdown data) async {
     if (_isDetailsDialogOpen) return;
@@ -1406,12 +1154,29 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
       }
     }
   }
+
+  // Liabilities to consider for the selected period (use active/non-archived)
+  List<models.Liability> _liabilitiesForPeriod() {
+    return liabilities.where((l) => !l.isArchived).toList();
+  }
+
+  void _goToPreviousPeriod() {
+    final allowed = _allowedPeriods();
+    final s = _periodStartFor(selectedMonth);
+    final idx = allowed.indexWhere((d) => _sameDay(d, s));
+    if (idx != -1 && idx < allowed.length - 1) {
+      setState(() => selectedMonth = allowed[idx + 1]);
+    }
+  }
+
+  void _goToNextPeriod() {
+    final allowed = _allowedPeriods();
+    final s = _periodStartFor(selectedMonth);
+    final idx = allowed.indexWhere((d) => _sameDay(d, s));
+    if (idx > 0) {
+      setState(() => selectedMonth = allowed[idx - 1]);
+    }
+  }
 }
 
-String _monthName(int m) {
-  const names = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
-  return names[m - 1];
-}
+ 

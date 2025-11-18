@@ -12,7 +12,12 @@ import 'screens/reports_screen.dart';
 import 'screens/transaction_screen.dart';
 import 'screens/savings_screen.dart';
 import 'screens/user_guide.dart';
-import 'utils/ui_intents.dart';
+// ui_intents retained only if other parts still reference; remove if unused after refactor.
+// import 'utils/ui_intents.dart';
+import 'services/period_service.dart';
+import 'services/navigation_service.dart';
+import 'services/notification_service.dart';
+import 'services/alerts_service.dart';
 // Removed flutter_svg import as the AppBar logo is no longer used
 
 @pragma('vm:entry-point')
@@ -158,6 +163,17 @@ FutureOr<void> homeWidgetBackgroundCallback(Uri? data) async {
 void main() {
   // Ensure bindings before using platform channels (HomeWidget)
   WidgetsFlutterBinding.ensureInitialized();
+  // Initialize notifications
+  Future.microtask(() async {
+    try {
+      await NotificationService.instance.init();
+      final granted = await NotificationService.instance.requestPermissions();
+      if (granted) {
+        await AlertsService.scheduleDailyRecordReminder();
+        await AlertsService.checkAndNotify();
+      }
+    } catch (_) {}
+  });
   // Register background callback for HomeWidget interactive actions after first frame
   WidgetsBinding.instance.addPostFrameCallback((_) {
     _registerHomeWidgetCallbackWithRetry();
@@ -256,6 +272,7 @@ class MyApp extends StatelessWidget {
       child: MaterialApp(
         title: 'RMinder',
         theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple)),
+        navigatorKey: NavigationService.instance.navigatorKey,
         home: const MainScreen(),
       ),
     );
@@ -364,12 +381,10 @@ List<Widget> buildGlobalAppBarActions(BuildContext context) {
       ],
       onSelected: (value) async {
         if (value == 'close') {
-          // Navigate to Reports tab (index 4) and then signal to open the Close flow.
-          TabSwitcher.of(context)?.switchTo(4);
-          // Defer signaling until after the tab switch layout completes.
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            UiIntents.closePeriodEvent.value++;
-          });
+          // Invoke close flow directly using root navigator context to ensure the dialog appears
+          // regardless of the current page.
+          final rootCtx = NavigationService.instance.navigatorKey.currentContext ?? context;
+          await PeriodService.closeActivePeriod(rootCtx);
         } else if (value == 'guide') {
           // Open the user guide dialog
           await showUserGuide(context);
