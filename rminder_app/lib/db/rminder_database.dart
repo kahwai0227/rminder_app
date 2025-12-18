@@ -965,9 +965,10 @@ class RMinderDatabase {
     final s = await getSetting(_activePeriodStartKey);
     if (s != null) {
       try {
-        final d0 = DateTime.parse(s);
-        // Normalize to date-only for comparisons
-        final d = DateTime(d0.year, d0.month, d0.day);
+        final d0 = DateTime.parse(s); // keep time component if present
+        final d = d0;
+        // For date-based comparisons, also derive a date-only version
+        final dDate = DateTime(d.year, d.month, d.day);
         // Correction path: If the stored start equals "today" or is later than the
         // inferred start based on reset day, and there is activity earlier than d
         // in the same open period, backfill to the inferred start. This fixes an
@@ -992,7 +993,8 @@ class RMinderDatabase {
             if (closed.isNotEmpty) {
               final last = closed.last; // sorted asc
               final ca = last['closedAt']!;
-              final minActive = DateTime(ca.year, ca.month, ca.day).add(const Duration(days: 1));
+              // Next period can start at the exact close timestamp (no day bump)
+              final minActive = ca;
               if (inferred.isBefore(minActive)) {
                 // Clamp inferred forward to the minimum allowed active start
                 // so we never regress to earlier reset-day (e.g., 10 Oct) after a newer close exists.
@@ -1002,13 +1004,13 @@ class RMinderDatabase {
             }
           } catch (_) {}
           // Only attempt correction if stored start is after inferred (or equals today)
-          final shouldConsider = (d.isAfter(inferred)) || (d == today);
+          final shouldConsider = (dDate.isAfter(inferred)) || (dDate == today);
           if (shouldConsider) {
             // If there are earlier transactions in [inferred, d), then we likely need correction
             final db = await instance.database;
             final res = await db.rawQuery(
               'SELECT COUNT(*) as c FROM transactions WHERE date >= ? AND date < ?',
-              [inferred.toIso8601String(), d.toIso8601String()],
+              [inferred.toIso8601String(), dDate.toIso8601String()],
             );
             final cnt = ((res.first['c']) as num?)?.toInt() ?? 0;
             if (cnt > 0) {
@@ -1028,11 +1030,9 @@ class RMinderDatabase {
       final closed = await getClosedMonthsWithClosedAt();
       if (closed.isNotEmpty) {
         final last = closed.last; // sorted ascending
-        // Next active period begins the day after the closedAt date
-        // E.g., if closedAt = Oct 15, next period starts Oct 16
         final ca = last['closedAt']!;
-        final closeDate = DateTime(ca.year, ca.month, ca.day);
-        final next = closeDate.add(const Duration(days: 1));
+        // Next active period begins at the close timestamp (same day) to support same-day closes
+        final next = ca;
         await setActivePeriodStart(next);
         return next;
       }

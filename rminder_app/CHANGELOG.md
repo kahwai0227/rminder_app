@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1] - 2025-12-18
+
+### Fixed
+- Reports split periods at the exact close timestamp, so same-day pre-close transactions stay in the closed period and only post-close transactions enter the new period.
+- Active period start keeps the precise close time (no midnight truncation), preventing next-period dates from jumping to the following day.
+- New period start and report ranges now honor the stored `closedAt` timestamp instead of a date-only boundary.
+
 ## [1.4.0] - 2025-11-18
 
 ### Highlights

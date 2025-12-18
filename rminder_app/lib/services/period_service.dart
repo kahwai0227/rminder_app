@@ -209,10 +209,9 @@ class PeriodService {
       await RMinderDatabase.instance.saveBudgetSnapshotForPeriod(periodStart, categories);
       await RMinderDatabase.instance.saveIncomeSnapshotForPeriod(periodStart, incomeSources);
 
-      // Determine closed period end (inclusive) as yesterday
-      final _t0 = _truncate(DateTime.now());
-      final _yday = _t0.subtract(const Duration(days: 1));
-      final _endExclusive = _yday.add(const Duration(days: 1));
+      // Determine closed period end using the actual close timestamp (with time)
+      final _closeAt = DateTime.now();
+      final _endExclusive = _closeAt.add(const Duration(microseconds: 1));
 
       // Snapshot spending per category (positive expenses only) for the closed period
       final Map<int, double> _spentAllCats = {};
@@ -265,9 +264,7 @@ class PeriodService {
         }
       }
 
-  final todayDate = _t0;
-  final yesterday = _yday;
-      final nextStart = todayDate; // new period begins today
+      final nextStart = _closeAt; // new period begins at the exact close timestamp
 
       if (mode == PeriodCloseAction.carryIncome) {
         // Record one-time carry income for next period via Settings
@@ -279,7 +276,7 @@ class PeriodService {
         await RMinderDatabase.instance.insertClosedMonth(
           monthStart: periodStart,
           action: 'carryIncome',
-          closedAt: yesterday,
+          closedAt: _closeAt,
         );
       } else if (mode == PeriodCloseAction.payDebt) {
         final liab = selectedLiab;
@@ -292,13 +289,13 @@ class PeriodService {
         await RMinderDatabase.instance.insertTransaction(models.Transaction(
           categoryId: liab.budgetCategoryId,
             amount: totalLeftover,
-            date: yesterday,
+            date: _closeAt,
             note: 'Period close payment (${_monthName(periodStart.month)} ${periodStart.year}) - ${liab.name}',
         ));
         await RMinderDatabase.instance.insertClosedMonth(
           monthStart: periodStart,
           action: 'payDebt',
-          closedAt: yesterday,
+          closedAt: _closeAt,
         );
       } else if (mode == PeriodCloseAction.contributeFund) {
         final fund = selectedFund;
@@ -311,20 +308,20 @@ class PeriodService {
         await RMinderDatabase.instance.insertTransaction(models.Transaction(
           categoryId: fund.budgetCategoryId!,
           amount: totalLeftover,
-          date: yesterday,
+          date: _closeAt,
           note: 'Period close contribution (${_monthName(periodStart.month)} ${periodStart.year}) - ${fund.name}',
         ));
         await RMinderDatabase.instance.insertClosedMonth(
           monthStart: periodStart,
           action: 'contributeFund',
-          closedAt: yesterday,
+          closedAt: _closeAt,
         );
       } else {
         // Close only
         await RMinderDatabase.instance.insertClosedMonth(
           monthStart: periodStart,
           action: 'closeOnly',
-          closedAt: yesterday,
+          closedAt: _closeAt,
         );
       }
 

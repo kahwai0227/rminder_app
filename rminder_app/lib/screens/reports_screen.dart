@@ -78,6 +78,10 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
 
   // Period start for a given anchor (truncate to date)
   DateTime _periodStartFor(DateTime anchor) {
+    // For the active period, keep the exact start timestamp (may include time of day)
+    if (!_isClosedPeriod(anchor) && _activePeriodStart != null && _sameDay(anchor, _activePeriodStart!)) {
+      return _activePeriodStart!;
+    }
     return DateTime(anchor.year, anchor.month, anchor.day);
   }
 
@@ -93,10 +97,8 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
       final key = DateTime(start.year, start.month, start.day);
       final ca = _closedAtByStart[key];
       if (ca != null) {
-        // Period ends at midnight of the next day after close date (date-based, not timestamp)
-        // E.g., closed on Oct 16 -> period includes all of Oct 16, ends at Oct 17 00:00:00
-        final closeDate = DateTime(ca.year, ca.month, ca.day);
-        return closeDate.add(const Duration(days: 1));
+        // Use the actual close timestamp as the exclusive upper bound to split transactions precisely.
+        return ca;
       }
       return DateTime(start.year, start.month + 1, start.day);
     }
@@ -655,7 +657,8 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
           ..addEntries(closedWith.map((m) {
             final s = m['start']!;
             final c = m['closedAt']!;
-            return MapEntry(DateTime(s.year, s.month, s.day), DateTime(c.year, c.month, c.day));
+            // Preserve the exact closed-at timestamp for accurate period boundaries
+            return MapEntry(DateTime(s.year, s.month, s.day), c);
           }));
       });
     } catch (e, st) {
