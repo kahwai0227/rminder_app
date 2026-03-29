@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_state.dart';
 import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/currency_input_formatter.dart';
@@ -15,14 +17,8 @@ class SavingsScreen extends StatefulWidget {
 
 class _SavingsScreenState extends State<SavingsScreen> {
   final ScrollController _scroll = ScrollController();
-  List<models.SinkingFund> _funds = [];
-  Map<int, double> _contribThisMonth = {};
 
-  @override
-  void initState() {
-    super.initState();
-    _loadFunds();
-  }
+
 
   @override
   void dispose() {
@@ -31,25 +27,14 @@ class _SavingsScreenState extends State<SavingsScreen> {
   }
 
   Future<void> _loadFunds() async {
-    final list = await RMinderDatabase.instance.getSinkingFunds();
-    if (!mounted) return;
-    setState(() => _funds = list);
-    await _loadContribThisMonth();
+    await Provider.of<AppState>(context, listen: false).loadAllData();
   }
 
   Future<void> _loadContribThisMonth() async {
-    final now = DateTime.now();
-    final map = <int, double>{};
-    for (final f in _funds) {
-      if (f.id == null) continue;
-      final sum = await RMinderDatabase.instance.sumContributedForFundInMonth(f.id!, now);
-      map[f.id!] = sum;
-    }
-    if (!mounted) return;
-    setState(() => _contribThisMonth = map);
+    await Provider.of<AppState>(context, listen: false).loadAllData();
   }
 
-  void _addOrEditFund({int? index}) {
+  void _addOrEditFund(List<models.SinkingFund> _funds, {int? index}) {
     final isEdit = index != null;
   final fund = isEdit ? _funds[index] : null;
     final nameCtrl = TextEditingController(text: fund?.name ?? '');
@@ -116,7 +101,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
                   ),
                 );
               } else {
-                final existing = _funds[index];
+                final existing = _funds[index!];
                 // If fund has no linked category yet (legacy records), ensure one exists now
                 int? catId = existing.budgetCategoryId;
                 if (catId == null) {
@@ -146,7 +131,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
     );
   }
 
-  void _deleteFund(int index) {
+  void _deleteFund(List<models.SinkingFund> _funds, int index) {
     final fund = _funds[index];
     showDialog<bool>(
       context: context,
@@ -172,7 +157,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
     });
   }
 
-  void _contribute(int index) async {
+  void _contribute(List<models.SinkingFund> _funds, Map<int, double> _contribThisMonth, int index) async {
     final fund = _funds[index];
     final contributed = _contribThisMonth[fund.id!] ?? 0.0;
     final remainingPlan = (fund.monthlyContribution - contributed).clamp(0, double.infinity);
@@ -205,8 +190,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
                 return;
               }
               await RMinderDatabase.instance.contributeToFund(fund, amt);
-              await _loadFunds();
-              await _loadContribThisMonth();
+              await Provider.of<AppState>(context, listen: false).loadAllData();
               if (mounted) Navigator.pop(context);
             },
             child: const Text('Confirm'),
@@ -216,7 +200,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
     );
   }
 
-  void _withdraw(int index) async {
+  void _withdraw(List<models.SinkingFund> _funds, int index) async {
     final fund = _funds[index];
     final ctrl = TextEditingController(text: '0.00');
     final noteCtrl = TextEditingController(text: '');
@@ -258,8 +242,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
                 return;
               }
               await RMinderDatabase.instance.spendFromFund(fund, amt, note: noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
-              await _loadFunds();
-              await _loadContribThisMonth();
+              await Provider.of<AppState>(context, listen: false).loadAllData();
               if (mounted) Navigator.pop(context);
             },
             child: const Text('Confirm'),
@@ -271,6 +254,9 @@ class _SavingsScreenState extends State<SavingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context);
+    final _funds = appState.sinkingFunds;
+    final _contribThisMonth = appState.contributedToFundsThisMonth;
     return Scaffold(
   appBar: AppBar(title: const Text('Savings'), actions: buildGlobalAppBarActions(context)),
       body: Padding(
@@ -281,7 +267,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
             ElevatedButton.icon(
               icon: const Icon(Icons.add),
               label: const Text('Add Fund'),
-              onPressed: () => _addOrEditFund(),
+              onPressed: () => _addOrEditFund(_funds),
             ),
             const SizedBox(height: 10),
             Expanded(
@@ -314,22 +300,22 @@ class _SavingsScreenState extends State<SavingsScreen> {
                                       IconButton(
                                         tooltip: 'Contribute',
                                         icon: const Icon(Icons.add_card),
-                                        onPressed: () => _contribute(index),
+                                        onPressed: () => _contribute(_funds, _contribThisMonth, index),
                                       ),
                                       IconButton(
                                         tooltip: 'Spend',
                                         icon: const Icon(Icons.remove_circle_outline, color: Colors.orange),
-                                        onPressed: () => _withdraw(index),
+                                        onPressed: () => _withdraw(_funds, index),
                                       ),
                                       IconButton(
                                         icon: const Icon(Icons.edit, color: Colors.blue),
                                         tooltip: 'Edit',
-                                        onPressed: () => _addOrEditFund(index: index),
+                                        onPressed: () => _addOrEditFund(_funds, index: index),
                                       ),
                                       IconButton(
                                         icon: const Icon(Icons.delete, color: Colors.red),
                                         tooltip: 'Delete',
-                                        onPressed: () => _deleteFund(index),
+                                        onPressed: () => _deleteFund(_funds, index),
                                       ),
                                     ],
                                   ),

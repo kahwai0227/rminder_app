@@ -19,14 +19,15 @@ class RMinderDatabase {
     final fullPath = join(dbDir, fileName);
     return await openDatabase(
       fullPath,
-      version: 11,
+      version: 13,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             budget_limit REAL NOT NULL,
-            spent REAL NOT NULL
+            spent REAL NOT NULL,
+            in_budget INTEGER NOT NULL DEFAULT 1
           )
         ''');
         await db.execute('''
@@ -283,6 +284,34 @@ class RMinderDatabase {
             )
           ''');
           await db.execute('CREATE INDEX IF NOT EXISTS idx_fund_snapshots_period ON fund_snapshots(period_start)');
+        }
+        if (oldVersion < 12) {
+          await db.execute('ALTER TABLE categories ADD COLUMN in_budget INTEGER NOT NULL DEFAULT 1');
+        }
+        if (oldVersion < 13) {
+          // Recover missing categories from budget_snapshots
+          await db.execute("""
+            INSERT INTO categories (id, name, budget_limit, spent, in_budget)
+            SELECT DISTINCT category_id, category_name, 0, 0, 0 
+            FROM budget_snapshots 
+            WHERE category_id NOT IN (SELECT id FROM categories)
+          """);
+
+          // Recover missing categories from spending_snapshots
+          await db.execute("""
+            INSERT INTO categories (id, name, budget_limit, spent, in_budget)
+            SELECT DISTINCT category_id, category_name, 0, 0, 0 
+            FROM spending_snapshots 
+            WHERE category_id NOT IN (SELECT id FROM categories)
+          """);
+
+          // Recover any remaining from transactions directly
+          await db.execute("""
+            INSERT INTO categories (id, name, budget_limit, spent, in_budget)
+            SELECT DISTINCT categoryId, 'Recovered Category ' || CAST(categoryId AS TEXT), 0, 0, 0 
+            FROM transactions 
+            WHERE categoryId NOT IN (SELECT id FROM categories)
+          """);
         }
       },
     );

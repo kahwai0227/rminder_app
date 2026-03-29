@@ -42,15 +42,16 @@ class BudgetCategory {
   final String name;
   final double budgetLimit;
   final double spent;
+  final bool inBudget;
 
-  BudgetCategory({this.id, required this.name, required this.budgetLimit, required this.spent});
+  BudgetCategory({this.id, required this.name, required this.budgetLimit, required this.spent, this.inBudget = true});
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'name': name,
-      'budget_limit': budgetLimit,
-      'spent': spent,
+      'budget_limit': budgetLimit,      'spent': spent,
+      'in_budget': inBudget ? 1 : 0,
     };
   }
 
@@ -58,8 +59,8 @@ class BudgetCategory {
     return BudgetCategory(
       id: map['id'],
       name: map['name'],
-      budgetLimit: map['budget_limit'],
-      spent: map['spent'],
+      budgetLimit: map['budget_limit'],      spent: map['spent'],
+      inBudget: (map['in_budget'] ?? 1) == 1,
     );
   }
 }
@@ -216,8 +217,7 @@ class SpendingSnapshot {
       'id': id,
       'period_start': DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String(),
       'category_id': categoryId,
-      'category_name': categoryName,
-      'spent': spent,
+      'category_name': categoryName,      'spent': spent,
     };
   }
 

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_state.dart';
 import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/logger.dart';
@@ -14,15 +16,15 @@ class LiabilitiesPage extends StatefulWidget {
 }
 
 class _LiabilitiesPageState extends State<LiabilitiesPage> {
-  List<models.Liability> liabilitiesList = [];
-  Map<int, double> _paidThisMonth = {};
   bool _dialogOpenGuard = false;
   final ScrollController _liabScroll = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _loadLiabilities();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Provider.of<AppState>(context, listen: false).loadAllData();
+    });
     UiIntents.editLiabilityId.addListener(_maybeOpenEditFromIntent);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (UiIntents.editLiabilityId.value != null) {
@@ -41,7 +43,7 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
   void _maybeOpenEditFromIntent() {
     final id = UiIntents.editLiabilityId.value;
     if (id == null) return;
-    final idx = liabilitiesList.indexWhere((l) => l.id == id);
+    final idx = Provider.of<AppState>(context, listen: false).liabilities.indexWhere((l) => l.id == id);
     if (idx == -1) {
       return;
     }
@@ -50,7 +52,7 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
       _dialogOpenGuard = true;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        _addOrEditLiability(index: idx);
+        _addOrEditLiability(Provider.of<AppState>(context, listen: false).liabilities, index: idx);
         await Future.delayed(const Duration(milliseconds: 300));
         if (mounted) _dialogOpenGuard = false;
       });
@@ -60,8 +62,8 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
   Future<void> _loadLiabilities() async {
     try {
       final list = await RMinderDatabase.instance.getLiabilities();
-      setState(() => liabilitiesList = list);
-      await _loadPaidThisMonth();
+      // removed
+      // removed
       _maybeOpenEditFromIntent();
     } catch (e, st) {
       logError(e, st);
@@ -72,18 +74,18 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
     try {
       final now = DateTime.now();
       final Map<int, double> map = {};
-      for (final liab in liabilitiesList) {
+      for (final liab in []) {
         if (liab.id == null) continue;
         final paid = await RMinderDatabase.instance.sumPaidForLiabilityInMonth(liab.id!, now);
         map[liab.id!] = paid;
       }
-      if (mounted) setState(() => _paidThisMonth = map);
+      // removed
     } catch (e, st) {
       logError(e, st);
     }
   }
 
-  void _addOrEditLiability({int? index}) {
+  void _addOrEditLiability(List<models.Liability> liabilitiesList, {int? index}) {
     final nameController = TextEditingController(text: index != null ? liabilitiesList[index].name : '');
   final balanceController = TextEditingController(text: index != null ? liabilitiesList[index].balance.toStringAsFixed(2) : '0.00');
   final plannedController = TextEditingController(text: index != null ? liabilitiesList[index].planned.toStringAsFixed(2) : '0.00');
@@ -162,7 +164,7 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
     );
   }
 
-  void _removeLiability(int index) {
+  void _removeLiability(List<models.Liability> liabilitiesList, int index) {
     final liab = liabilitiesList[index];
     showDialog<bool>(
       context: context,
@@ -197,6 +199,9 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context);
+    final liabilitiesList = appState.liabilities;
+    final _paidThisMonth = appState.paidLiabilitiesThisMonth;
     return Scaffold(
   appBar: AppBar(title: const Text('Liabilities'), actions: buildGlobalAppBarActions(context)),
       body: Padding(
@@ -205,7 +210,7 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
           ElevatedButton.icon(
             icon: const Icon(Icons.add),
             label: const Text('Add Liability'),
-            onPressed: () => _addOrEditLiability(),
+            onPressed: () => _addOrEditLiability(liabilitiesList),
           ),
           const SizedBox(height: 10),
           Expanded(
@@ -271,7 +276,7 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
                                                 );
                                               }
                                               await _loadLiabilities();
-                                              await _loadPaidThisMonth();
+                                              // removed
                                               if (mounted) Navigator.pop(context);
                                             },
                                             child: const Text('Confirm'),
@@ -308,7 +313,7 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
                                                 transactionId: txId,
                                               );
                                               await _loadLiabilities();
-                                              await _loadPaidThisMonth();
+                                              // removed
                                               if (mounted) Navigator.pop(context);
                                             },
                                             child: const Text('Confirm'),
@@ -322,12 +327,12 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
                               IconButton(
                                 icon: const Icon(Icons.edit, color: Colors.blue),
                                 tooltip: 'Edit',
-                                onPressed: () => _addOrEditLiability(index: index),
+                                onPressed: () => _addOrEditLiability(liabilitiesList, index: index),
                               ),
                               IconButton(
                                 icon: const Icon(Icons.delete, color: Colors.red),
                                 tooltip: 'Delete',
-                                onPressed: () => _removeLiability(index),
+                                onPressed: () => _removeLiability(liabilitiesList, index),
                               ),
                             ]),
                           ),

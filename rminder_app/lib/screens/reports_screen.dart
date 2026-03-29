@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_state.dart';
 import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/logger.dart';
@@ -15,20 +17,52 @@ class ReportingPage extends StatefulWidget {
   State<ReportingPage> createState() => _ReportingPageState();
 }
 
+class _OverviewStat extends StatelessWidget {
+  final String title;
+  final double amount;
+  final Color color;
+
+  const _OverviewStat({
+    required this.title,
+    required this.amount,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 4),
+        Text(
+          '₹${amount.toStringAsFixed(2)}',
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: color,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 // Legacy CloseAction and local close flow have been removed in favor of PeriodService
 
 class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
   
-  List<models.BudgetCategory> categories = [];
-  List<models.Transaction> transactions = [];
-  List<models.Liability> liabilities = [];
-  List<models.SinkingFund> sinkingFunds = [];
-  List<models.IncomeSource> incomeSources = [];
+AppState get _appState => Provider.of<AppState>(context, listen: false);
+  List<models.BudgetCategory> get categories => _appState.categories.where((c) => c.inBudget).toList();
+  List<models.Transaction> get transactions => _appState.transactions;
+  List<models.Liability> get liabilities => _appState.liabilities;
+  List<models.SinkingFund> get sinkingFunds => _appState.sinkingFunds;
+  List<models.IncomeSource> get incomeSources => _appState.incomeSources;
+  DateTime? get _activePeriodStart => _appState.activePeriodStart;
+
   DateTime selectedMonth = DateTime.now();
-  DateTime? _activePeriodStart; // Track the actual active period start date
-  double _activeCarryIncome = 0.0; // One-time carry-forward income for active period
+double _activeCarryIncome = 0.0; // One-time carry-forward income for active period
   List<DateTime> _closedMonths = [];
   // Map of period start date -> actual closed-at date (both truncated to date)
   final Map<DateTime, DateTime> _closedAtByStart = {};
@@ -139,6 +173,10 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final appState = Provider.of<AppState>(context);
+    if (appState.isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final ps = _periodStartFor(selectedMonth);
     final isClosed = _isClosedPeriod(ps);
     final snaps = isClosed ? _snapshotsByPeriod[DateTime(ps.year, ps.month, ps.day)] : null;
@@ -294,6 +332,12 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
     }).toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
+    final overviewPlanned = spendingList.fold<double>(0.0, (s, c) => s + c.limit);
+    final overviewSpent = spendingList.fold<double>(0.0, (s, c) => s + c.spent);
+    final overviewRemaining = (overviewPlanned - overviewSpent).clamp(0.0, double.infinity);
+    final isOverBudget = overviewSpent > overviewPlanned && overviewPlanned > 0;
+    final progress = overviewPlanned > 0 ? (overviewSpent / overviewPlanned).clamp(0.0, 1.0) : 0.0;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Report'),
@@ -409,52 +453,103 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
               ),
               const SizedBox(height: 12),
 
-              // Budget summary
-              Text('Budget Summary', style: Theme.of(context).textTheme.titleMedium),
-              SizedBox(
-                width: double.infinity,
-                child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Builder(builder: (_) {
-                    final int incomeCents = (periodIncome * 100).round();
-                    final int budgetCents = (totalBudget * 100).round();
-                    final int unallocatedCents = (unallocated * 100).round();
-                    final hasIncome = incomeCents > 0;
-                    final hasBudget = budgetCents > 0;
-                    final isNoIncomeButBudgeted = !hasIncome && hasBudget;
-                    final isOverBudgeted = unallocatedCents < 0;
-                    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const SizedBox(height: 4),
-                      Text('Total Income: ₹${(incomeCents / 100).toStringAsFixed(2)}'),
-                      Text('Total Budgeted: ₹${(budgetCents / 100).toStringAsFixed(2)}'),
-                      const SizedBox(height: 4),
-                      if (isNoIncomeButBudgeted) ...[
-                        const Text('No income declared',
-                            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 4),
-                        const Text('Tip: Add income sources under Budget.',
-                            style: TextStyle(fontSize: 12, color: Colors.orange)),
-                      ] else if (isOverBudgeted) ...[
-                        Text('Overbudgeted by ₹${(-unallocatedCents / 100).toStringAsFixed(2)}',
-                            style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Tip: Reduce some category limits until your total budgeted amount is at or below your income.',
-                          style: TextStyle(fontSize: 12, color: Colors.orange),
-                        ),
-                      ] else ...[
-                        Text('Unallocated: ₹${(unallocatedCents / 100).toStringAsFixed(2)}',
-                            style: TextStyle(
-                                color: unallocatedCents == 0 ? Colors.green : Colors.orange,
-                                fontWeight: FontWeight.bold)),
+              // Overview dashboard (mirrors Budget screen style)
+              Card(
+                elevation: 4,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    gradient: LinearGradient(
+                      colors: [
+                        Theme.of(context).colorScheme.primaryContainer.withOpacity(0.7),
+                        Theme.of(context).colorScheme.surface,
                       ],
-                      const SizedBox(height: 4),
-                    ]);
-                  }),
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Overview',
+                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Income: ₹${periodIncome.toStringAsFixed(2)}',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: isOverBudget
+                                  ? Theme.of(context).colorScheme.error
+                                  : Theme.of(context).colorScheme.primary,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              isOverBudget ? 'Over Budget' : 'On Track',
+                              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                color: Theme.of(context).colorScheme.onPrimary,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          _OverviewStat(
+                            title: 'Planned',
+                            amount: overviewPlanned,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          _OverviewStat(
+                            title: 'Spent',
+                            amount: overviewSpent,
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                          _OverviewStat(
+                            title: 'Remaining',
+                            amount: overviewRemaining,
+                            color: Theme.of(context).colorScheme.tertiary,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(
+                          value: progress,
+                          minHeight: 10,
+                          backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            isOverBudget
+                                ? Theme.of(context).colorScheme.error
+                                : Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
 
               const SizedBox(height: 10),
 
@@ -640,11 +735,6 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
       }
       if (!mounted) return;
       setState(() {
-        categories = cats;
-        transactions = txns;
-        liabilities = liabs;
-        sinkingFunds = funds;
-        incomeSources = incomes;
         _closedMonths = closed;
         _snapshotsByPeriod
           ..clear()
@@ -668,25 +758,23 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
 
   Future<void> _loadActivePeriod() async {
     try {
-      final active = await RMinderDatabase.instance.getActivePeriodStart();
+      final appState = Provider.of<AppState>(context, listen: false);
+      final active = appState.activePeriodStart;
       if (!mounted) return;
+      
+      final actualStart = active ?? DateTime.now();
       setState(() {
-        _activePeriodStart = active ?? DateTime.now();
-        // Only set selectedMonth on first load (when it's still default DateTime.now())
-        // After that, preserve user's navigation
         final now = DateTime.now();
-        final isDefaultValue = selectedMonth.year == now.year && 
-                                selectedMonth.month == now.month && 
+        final isDefaultValue = selectedMonth.year == now.year &&
+                                selectedMonth.month == now.month &&
                                 selectedMonth.day == now.day;
         if (isDefaultValue) {
-          selectedMonth = _activePeriodStart!;
+          selectedMonth = actualStart;
         }
       });
-      // Load one-time carry-forward income for the active period (if any)
+      // Load one-time carry-forward income for the active period (if any)      
       try {
-        final s = _activePeriodStart!;
-        final key = 'carry_income:${s.year.toString().padLeft(4, '0')}-${s.month.toString().padLeft(2, '0')}-${s.day.toString().padLeft(2, '0')}'
-            ;
+        final key = 'carry_income:--';
         final str = await RMinderDatabase.instance.getSetting(key);
         final val = double.tryParse(str ?? '0') ?? 0.0;
         if (mounted) {
@@ -1142,7 +1230,7 @@ class _ReportingPageState extends State<ReportingPage> with AutomaticKeepAliveCl
       if (!mounted) return;
       setState(() {
         selectedMonth = periodStart;
-        _activePeriodStart = periodStart;
+        
       });
       
       ScaffoldMessenger.of(context).showSnackBar(

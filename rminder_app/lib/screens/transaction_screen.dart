@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_state.dart';
 import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/logger.dart';
 import '../utils/currency_input_formatter.dart';
 import '../main.dart' show buildGlobalAppBarActions;
-import '../utils/ui_intents.dart';
 
 class TransactionsPage extends StatefulWidget {
   const TransactionsPage({Key? key}) : super(key: key);
@@ -13,10 +14,6 @@ class TransactionsPage extends StatefulWidget {
 }
 
 class _TransactionsPageState extends State<TransactionsPage> {
-  List<models.Transaction> transactions = [];
-  List<models.BudgetCategory> categories = [];
-  List<models.Liability> liabilities = [];
-  List<models.SinkingFund> _sinkingFunds = [];
   bool _hideDebt = false;
   final ScrollController _txScroll = ScrollController();
   models.BudgetCategory? _filterCategory;
@@ -50,46 +47,14 @@ class _TransactionsPageState extends State<TransactionsPage> {
   }
 
   @override
-  void initState() {
-    super.initState();
-    _loadCategoriesAndTransactions();
-    // Refresh when categories are added/renamed/deleted elsewhere (e.g., Liabilities/Savings)
-    UiIntents.categoriesChangedEvent.addListener(_loadCategoriesAndTransactions);
-  }
-
-  @override
   void dispose() {
     _txScroll.dispose();
-    UiIntents.categoriesChangedEvent.removeListener(_loadCategoriesAndTransactions);
     super.dispose();
   }
 
-  Future<void> _loadCategoriesAndTransactions() async {
-    try {
-      final cats = await RMinderDatabase.instance.getCategories();
-      final txns = await RMinderDatabase.instance.getTransactions();
-      final liabs = await RMinderDatabase.instance.getLiabilities();
-      final funds = await RMinderDatabase.instance.getSinkingFunds();
-      final validCategoryIds = cats.map((c) => c.id).toSet();
-      final orphaned = txns.where((t) => !validCategoryIds.contains(t.categoryId)).toList();
-      for (final t in orphaned) {
-        await RMinderDatabase.instance.deleteTransaction(t.id!);
-        logError('Deleted orphaned transaction with id: ${t.id}, missing category: ${t.categoryId}');
-      }
-      setState(() {
-        categories = cats;
-        transactions = txns.where((t) => validCategoryIds.contains(t.categoryId)).toList();
-        liabilities = liabs;
-        _sinkingFunds = funds;
-      });
-    } catch (e, st) {
-      logError(e, st);
-    }
-  }
-
-  List<models.Transaction> get filteredTransactions {
-    final debtCategoryIds = liabilities.map((l) => l.budgetCategoryId).toSet();
-    return transactions.where((txn) {
+  List<models.Transaction> _getFilteredTransactions(AppState state) {
+    final debtCategoryIds = state.liabilities.map((l) => l.budgetCategoryId).toSet();
+    return state.transactions.where((txn) {
       final byCategory = _filterCategory == null || txn.categoryId == _filterCategory!.id;
       final byDebt = !_hideDebt || !debtCategoryIds.contains(txn.categoryId);
       bool byDate = true;
@@ -107,30 +72,25 @@ class _TransactionsPageState extends State<TransactionsPage> {
     }).toList();
   }
 
-  bool _isSinkingFundCategory(int categoryId) =>
-      _sinkingFunds.any((f) => f.budgetCategoryId == categoryId);
+  bool _isSinkingFundCategory(AppState state, int categoryId) =>
+      state.sinkingFunds.any((f) => f.budgetCategoryId == categoryId);
 
-  (String display, bool isPositive) _signedAmountForDisplay(models.Transaction t) {
-    // Convention:
-    // - For non-sinking categories, show as expense (-) regardless of stored sign.
-    // - For sinking funds, show + for contributions (>=0), - for withdrawals (<0).
+  (String display, bool isPositive) _signedAmountForDisplay(AppState state, models.Transaction t) {
     const symbol = '₹';
-    if (_isSinkingFundCategory(t.categoryId)) {
+    if (_isSinkingFundCategory(state, t.categoryId)) {
       final isPos = t.amount >= 0;
       final v = t.amount.abs().toStringAsFixed(2);
-      return ('${isPos ? '+' : '-'}$symbol$v', isPos);
+      return (isPos ? '+$symbol$v' : '-$symbol$v', isPos);
     }
     final v = t.amount.abs().toStringAsFixed(2);
     return ('-$symbol$v', false);
   }
 
-  List<Widget> _buildGroupedTransactionWidgets(BuildContext context) {
-    final txns = List<models.Transaction>.from(filteredTransactions);
-    // Sort by date (desc), then by id desc to keep recent first
+  List<Widget> _buildGroupedTransactionWidgets(BuildContext context, AppState state) {
+    final txns = List<models.Transaction>.from(_getFilteredTransactions(state));
     txns.sort((a, b) {
       final d = b.date.compareTo(a.date);
       if (d != 0) return d;
-      // Null-safe id compare
       final aid = a.id ?? -1;
       final bid = b.id ?? -1;
       return bid.compareTo(aid);
@@ -141,11 +101,10 @@ class _TransactionsPageState extends State<TransactionsPage> {
 
     for (final t in txns) {
       final dateOnly = DateTime(t.date.year, t.date.month, t.date.day);
-      final cat = categories.firstWhere((c) => c.id == t.categoryId,
+      final cat = state.categories.firstWhere((c) => c.id == t.categoryId,
           orElse: () => models.BudgetCategory(id: -1, name: 'Unknown', budgetLimit: 0, spent: 0));
 
       if (currentDate == null || dateOnly != currentDate) {
-        // Close previous group with a divider (if any)
         if (currentDate != null) {
           children.add(const Divider(height: 24));
         }
@@ -157,10 +116,10 @@ class _TransactionsPageState extends State<TransactionsPage> {
         children.add(const Divider());
       }
 
-      final (displayAmount, isPositive) = _signedAmountForDisplay(t);
+      final (displayAmount, isPositive) = _signedAmountForDisplay(state, t);
       final amountColor = isPositive ? Colors.green : Colors.red;
-      final isDebt = liabilities.any((l) => l.budgetCategoryId == t.categoryId);
-      final isSaving = _isSinkingFundCategory(t.categoryId);
+      final isDebt = state.liabilities.any((l) => l.budgetCategoryId == t.categoryId);
+      final isSaving = _isSinkingFundCategory(state, t.categoryId);
       IconData leadingIcon = Icons.shopping_bag;
       if (isDebt) {
         leadingIcon = Icons.savings;
@@ -200,7 +159,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                 IconButton(
                   tooltip: 'Edit',
                   icon: const Icon(Icons.edit, color: Colors.blue),
-                  onPressed: () => _showEditTransactionDialog(t),
+                  onPressed: () => _showEditTransactionDialog(state, t),
                 ),
                 IconButton(
                   tooltip: 'Delete',
@@ -228,9 +187,9 @@ class _TransactionsPageState extends State<TransactionsPage> {
     return children;
   }
 
-  Future<void> _showAddTransactionDialog() async {
-    models.BudgetCategory? selectedCategory = categories.isNotEmpty ? categories[0] : null;
-  final amountController = TextEditingController(text: '0.00');
+  Future<void> _showAddTransactionDialog(AppState state) async {
+    models.BudgetCategory? selectedCategory = state.categories.isNotEmpty ? state.categories[0] : null;
+    final amountController = TextEditingController(text: '0.00');
     final noteController = TextEditingController();
     DateTime selectedDate = DateTime.now();
     await showDialog(
@@ -239,15 +198,15 @@ class _TransactionsPageState extends State<TransactionsPage> {
         title: const Text('Add Transaction'),
         content: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            StatefulBuilder(builder: (context, setState) {
+            StatefulBuilder(builder: (context, setDialogState) {
               return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 DropdownButton<models.BudgetCategory>(
                   value: selectedCategory,
                   isExpanded: true,
-                  items: categories
+                  items: state.categories
                       .map((cat) => DropdownMenuItem(value: cat, child: Text(cat.name)))
                       .toList(),
-                  onChanged: (cat) => setState(() => selectedCategory = cat),
+                  onChanged: (cat) => setDialogState(() => selectedCategory = cat),
                 ),
                 TextField(
                   controller: amountController,
@@ -259,7 +218,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                   controller: noteController,
                   decoration: const InputDecoration(labelText: 'Note (optional)'),
                   maxLength: 30,
-                  onChanged: (_) => setState(() {}),
+                  onChanged: (_) => setDialogState(() {}),
                 ),
                 if (noteController.text.length >= 30)
                   const Padding(
@@ -276,7 +235,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                       firstDate: DateTime(2000),
                       lastDate: DateTime(2100),
                     );
-                    if (picked != null) setState(() => selectedDate = picked);
+                    if (picked != null) setDialogState(() => selectedDate = picked);
                   },
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
@@ -327,8 +286,10 @@ class _TransactionsPageState extends State<TransactionsPage> {
                 date: selectedDate,
                 note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
               ));
-              await _loadCategoriesAndTransactions();
-              if (mounted) Navigator.pop(context);
+              if (mounted) {
+                Provider.of<AppState>(context, listen: false).refresh();
+                Navigator.pop(context);
+              }
             },
             child: const Text('Add'),
           ),
@@ -337,10 +298,10 @@ class _TransactionsPageState extends State<TransactionsPage> {
     );
   }
 
-  Future<void> _showEditTransactionDialog(models.Transaction txn) async {
+  Future<void> _showEditTransactionDialog(AppState state, models.Transaction txn) async {
     models.BudgetCategory? selectedCategory =
-        categories.firstWhere((c) => c.id == txn.categoryId, orElse: () => categories.isNotEmpty ? categories[0] : models.BudgetCategory(id: -1, name: 'N/A', budgetLimit: 0, spent: 0));
-  final amountController = TextEditingController(text: txn.amount.toStringAsFixed(2));
+        state.categories.firstWhere((c) => c.id == txn.categoryId, orElse: () => state.categories.isNotEmpty ? state.categories[0] : models.BudgetCategory(id: -1, name: 'N/A', budgetLimit: 0, spent: 0));
+    final amountController = TextEditingController(text: txn.amount.toStringAsFixed(2));
     final noteController = TextEditingController(text: txn.note ?? '');
     DateTime selectedDate = txn.date;
     await showDialog(
@@ -349,14 +310,14 @@ class _TransactionsPageState extends State<TransactionsPage> {
         title: const Text('Edit Transaction'),
         content: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            StatefulBuilder(builder: (context, setState) {
+            StatefulBuilder(builder: (context, setDialogState) {
               return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 DropdownButton<models.BudgetCategory>(
                   value: selectedCategory,
                   isExpanded: true,
                   items:
-                      categories.map((cat) => DropdownMenuItem(value: cat, child: Text(cat.name))).toList(),
-                  onChanged: (cat) => setState(() => selectedCategory = cat),
+                      state.categories.map((cat) => DropdownMenuItem(value: cat, child: Text(cat.name))).toList(),
+                  onChanged: (cat) => setDialogState(() => selectedCategory = cat),
                 ),
                 TextField(
                   controller: amountController,
@@ -368,7 +329,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                   controller: noteController,
                   decoration: const InputDecoration(labelText: 'Note (optional)'),
                   maxLength: 30,
-                  onChanged: (_) => setState(() {}),
+                  onChanged: (_) => setDialogState(() {}),
                 ),
                 if (noteController.text.length >= 30)
                   const Padding(
@@ -385,7 +346,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                       firstDate: DateTime(2000),
                       lastDate: DateTime(2100),
                     );
-                    if (picked != null) setState(() => selectedDate = picked);
+                    if (picked != null) setDialogState(() => selectedDate = picked);
                   },
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
@@ -437,8 +398,10 @@ class _TransactionsPageState extends State<TransactionsPage> {
                 date: selectedDate,
                 note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
               ));
-              await _loadCategoriesAndTransactions();
-              if (mounted) Navigator.pop(context);
+              if (mounted) {
+                Provider.of<AppState>(context, listen: false).refresh();
+                Navigator.pop(context);
+              }
             },
             child: const Text('Save'),
           ),
@@ -465,16 +428,13 @@ class _TransactionsPageState extends State<TransactionsPage> {
     );
     if (confirmed == true) {
       await RMinderDatabase.instance.deleteTransaction(txn.id!);
-      await _loadCategoriesAndTransactions();
+      if (mounted) {
+        Provider.of<AppState>(context, listen: false).refresh();
+      }
     }
   }
 
-  Future<void> _showFilterDialog() async {
-    // Ensure categories list is current (e.g., after fund/category renames)
-    try {
-      final latestCats = await RMinderDatabase.instance.getCategories();
-      if (mounted) setState(() => categories = latestCats);
-    } catch (_) {}
+  Future<void> _showFilterDialog(AppState state) async {
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) {
@@ -502,8 +462,8 @@ class _TransactionsPageState extends State<TransactionsPage> {
 
         double minAvail = 0;
         double maxAvail = 1000;
-        if (transactions.isNotEmpty) {
-          final amts = transactions.map((t) => t.amount).toList();
+        if (state.transactions.isNotEmpty) {
+          final amts = state.transactions.map((t) => t.amount).toList();
           minAvail = amts.reduce((a, b) => a < b ? a : b);
           maxAvail = amts.reduce((a, b) => a > b ? a : b);
           if (maxAvail <= minAvail) maxAvail = minAvail + 1;
@@ -517,7 +477,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
             TextEditingController(text: amountRange.end.toStringAsFixed(0));
 
         return StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
+          builder: (context, setDialogState) => AlertDialog(
             title: const Text('Customize Filter'),
             content: SingleChildScrollView(
               child: SizedBox(
@@ -529,15 +489,15 @@ class _TransactionsPageState extends State<TransactionsPage> {
                     isExpanded: true,
                     items: [
                       const DropdownMenuItem(value: null, child: Text('All Categories')),
-                      ...categories.map((c) => DropdownMenuItem(value: c, child: Text(c.name)))
+                      ...state.categories.map((c) => DropdownMenuItem(value: c, child: Text(c.name)))
                     ],
-                    onChanged: (cat) => setState(() => tempCategory = cat),
+                    onChanged: (cat) => setDialogState(() => tempCategory = cat),
                   ),
                   const SizedBox(height: 8),
                   FilterChip(
                     label: const Text('Hide Debt'),
                     selected: tempHideDebt,
-                    onSelected: (v) => setState(() => tempHideDebt = v),
+                    onSelected: (v) => setDialogState(() => tempHideDebt = v),
                   ),
                   const SizedBox(height: 12),
                   Row(children: [
@@ -545,7 +505,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                       label: const Text('Day'),
                       selected: dateMode == 'single',
                       onSelected: (_) {
-                        setState(() {
+                        setDialogState(() {
                           dateMode = 'single';
                           tempSingleDate = DateTime.now();
                           tempStartDate = null;
@@ -559,7 +519,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                       label: const Text('Range'),
                       selected: dateMode == 'range',
                       onSelected: (_) {
-                        setState(() {
+                        setDialogState(() {
                           dateMode = 'range';
                           tempSingleDate = null;
                           tempStartDate = DateTime(now.year, now.month, 1);
@@ -573,7 +533,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                       label: const Text('Month'),
                       selected: dateMode == 'month',
                       onSelected: (_) {
-                        setState(() {
+                        setDialogState(() {
                           dateMode = 'month';
                           tempSingleDate = null;
                           tempStartDate = null;
@@ -592,7 +552,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                           firstDate: DateTime(2000),
                           lastDate: DateTime(2100),
                         );
-                        if (picked != null) setState(() => tempSingleDate = picked);
+                        if (picked != null) setDialogState(() => tempSingleDate = picked);
                       },
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
@@ -632,7 +592,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                           initialEntryMode: DatePickerEntryMode.calendarOnly,
                         );
                         if (pickedRange != null) {
-                          setState(() {
+                          setDialogState(() {
                             tempStartDate = pickedRange.start;
                             tempEndDate = pickedRange.end;
                           });
@@ -696,7 +656,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                             ],
                           ),
                         );
-                        if (selected != null) setState(() => tempMonthDate = selected);
+                        if (selected != null) setDialogState(() => tempMonthDate = selected);
                       },
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
@@ -731,7 +691,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                         keyboardType: TextInputType.number,
                         onChanged: (val) {
                           final parsed = double.tryParse(val);
-                          setState(() {
+                          setDialogState(() {
                             if (parsed == null) {
                               tempMinAmount = null;
                             } else {
@@ -759,7 +719,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                         keyboardType: TextInputType.number,
                         onChanged: (val) {
                           final parsed = double.tryParse(val);
-                          setState(() {
+                          setDialogState(() {
                             if (parsed == null) {
                               tempMaxAmount = null;
                             } else {
@@ -790,7 +750,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                       amountRange.end.toStringAsFixed(0),
                     ),
                     onChanged: (values) {
-                      setState(() {
+                      setDialogState(() {
                         amountRange = values;
                         tempMinAmount = values.start;
                         tempMaxAmount = values.end;
@@ -806,7 +766,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
               TextButton(
                 child: const Text('Clear'),
                 onPressed: () {
-                  setState(() {
+                  setDialogState(() {
                     tempCategory = null;
                     tempSingleDate = null;
                     tempStartDate = null;
@@ -882,37 +842,48 @@ class _TransactionsPageState extends State<TransactionsPage> {
   Widget build(BuildContext context) {
     try {
       return Scaffold(
-  appBar: AppBar(title: const Text('Transactions'), actions: buildGlobalAppBarActions(context)),
-        body: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              ElevatedButton.icon(
-                icon: const Icon(Icons.filter_list),
-                label: const Text('Filter'),
-                onPressed: _showFilterDialog,
-              ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text('Add'),
-                onPressed: categories.isEmpty ? null : _showAddTransactionDialog,
-              ),
-            ]),
-            Expanded(
-              child: categories.isEmpty
-                  ? const Center(child: Text('No categories available. Add a category to begin.'))
-                  : filteredTransactions.isEmpty
-                      ? const Center(child: Text('No transactions yet.'))
-                      : Scrollbar(
-                          controller: _txScroll,
-                          thumbVisibility: true,
-                          child: ListView(
-                            controller: _txScroll,
-                            children: _buildGroupedTransactionWidgets(context),
-                          ),
-                        ),
-            ),
-          ]),
+        appBar: AppBar(title: const Text('Transactions'), actions: buildGlobalAppBarActions(context)),
+        body: Consumer<AppState>(
+          builder: (context, appState, child) {
+            if (appState.isLoading) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            final filteredTxns = _getFilteredTransactions(appState);
+
+            return Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.filter_list),
+                    label: const Text('Filter'),
+                    onPressed: () => _showFilterDialog(appState),
+                  ),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add'),
+                    onPressed: appState.categories.isEmpty ? null : () => _showAddTransactionDialog(appState),
+                  ),
+                ]),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: appState.categories.isEmpty
+                      ? const Center(child: Text('No categories available. Add a category to begin.'))
+                      : filteredTxns.isEmpty
+                          ? const Center(child: Text('No transactions yet.'))
+                          : Scrollbar(
+                              controller: _txScroll,
+                              thumbVisibility: true,
+                              child: ListView(
+                                controller: _txScroll,
+                                children: _buildGroupedTransactionWidgets(context, appState),
+                              ),
+                            ),
+                ),
+              ]),
+            );
+          },
         ),
       );
     } catch (e, st) {
