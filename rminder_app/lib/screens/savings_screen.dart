@@ -4,12 +4,14 @@ import '../providers/app_state.dart';
 import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/currency_input_formatter.dart';
+import '../utils/mutation_guard.dart';
+import '../widgets/compact_cards.dart';
 import '../main.dart' show buildGlobalAppBarActions;
 import '../main.dart' as app;
 import '../utils/ui_intents.dart';
 
 class SavingsScreen extends StatefulWidget {
-  const SavingsScreen({Key? key}) : super(key: key);
+  const SavingsScreen({super.key});
 
   @override
   State<SavingsScreen> createState() => _SavingsScreenState();
@@ -27,16 +29,13 @@ class _SavingsScreenState extends State<SavingsScreen> {
   }
 
   Future<void> _loadFunds() async {
+    if (!mounted) return;
     await Provider.of<AppState>(context, listen: false).loadAllData();
   }
 
-  Future<void> _loadContribThisMonth() async {
-    await Provider.of<AppState>(context, listen: false).loadAllData();
-  }
-
-  void _addOrEditFund(List<models.SinkingFund> _funds, {int? index}) {
+  void _addOrEditFund(List<models.SinkingFund> funds, {int? index}) {
     final isEdit = index != null;
-  final fund = isEdit ? _funds[index] : null;
+    final fund = isEdit ? funds[index] : null;
     final nameCtrl = TextEditingController(text: fund?.name ?? '');
     final targetCtrl = TextEditingController(text: (fund?.targetAmount ?? 0).toStringAsFixed(2));
     final balanceCtrl = TextEditingController(text: (fund?.balance ?? 0).toStringAsFixed(2));
@@ -89,40 +88,45 @@ class _SavingsScreenState extends State<SavingsScreen> {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter valid values.')));
                 return;
               }
-              if (!isEdit) {
-                final catId = await RMinderDatabase.instance.ensureSavingsCategory(name, monthly: monthly);
-                await RMinderDatabase.instance.insertSinkingFund(
-                  models.SinkingFund(
-                    name: name,
-                    targetAmount: target,
-                    balance: bal > target ? target : bal,
-                    monthlyContribution: monthly,
-                    budgetCategoryId: catId,
-                  ),
-                );
-              } else {
-                final existing = _funds[index!];
-                // If fund has no linked category yet (legacy records), ensure one exists now
-                int? catId = existing.budgetCategoryId;
-                if (catId == null) {
-                  catId = await RMinderDatabase.instance.ensureSavingsCategory(name, monthly: monthly);
-                }
-                await RMinderDatabase.instance.updateSinkingFund(
-                  models.SinkingFund(
-                    id: existing.id,
-                    name: name,
-                    targetAmount: target,
-                    balance: bal > target ? target : bal,
-                    monthlyContribution: monthly,
-                    budgetCategoryId: catId,
-                  ),
-                );
-              }
-              await _loadFunds();
-              // Also update widget categories cache to reflect rename/new fund's category
-              await app.syncWidgetCategories();
-              UiIntents.categoriesChangedEvent.value++;
-              if (mounted) Navigator.pop(context);
+              await runGuardedMutation(
+                context: context,
+                failureMessage: isEdit ? 'Failed to update fund.' : 'Failed to add fund.',
+                action: () async {
+                  if (!isEdit) {
+                    final catId = await RMinderDatabase.instance.ensureSavingsCategory(name, monthly: monthly);
+                    await RMinderDatabase.instance.insertSinkingFund(
+                      models.SinkingFund(
+                        name: name,
+                        targetAmount: target,
+                        balance: bal > target ? target : bal,
+                        monthlyContribution: monthly,
+                        budgetCategoryId: catId,
+                      ),
+                    );
+                  } else {
+                    final existing = funds[index];
+                    // If fund has no linked category yet (legacy records), ensure one exists now
+                    int? catId = existing.budgetCategoryId;
+                    catId ??= await RMinderDatabase.instance.ensureSavingsCategory(name, monthly: monthly);
+                    await RMinderDatabase.instance.updateSinkingFund(
+                      models.SinkingFund(
+                        id: existing.id,
+                        name: name,
+                        targetAmount: target,
+                        balance: bal > target ? target : bal,
+                        monthlyContribution: monthly,
+                        budgetCategoryId: catId,
+                      ),
+                    );
+                  }
+                  await _loadFunds();
+                  await app.syncWidgetCategories();
+                  UiIntents.categoriesChangedEvent.value++;
+                },
+                onSuccess: () async {
+                  if (context.mounted) Navigator.pop(context);
+                },
+              );
             },
             child: Text(isEdit ? 'Save' : 'Add'),
           ),
@@ -131,9 +135,9 @@ class _SavingsScreenState extends State<SavingsScreen> {
     );
   }
 
-  void _deleteFund(List<models.SinkingFund> _funds, int index) {
-    final fund = _funds[index];
-    showDialog<bool>(
+  Future<void> _deleteFund(List<models.SinkingFund> funds, int index) async {
+    final fund = funds[index];
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Fund'),
@@ -147,22 +151,29 @@ class _SavingsScreenState extends State<SavingsScreen> {
           ),
         ],
       ),
-    ).then((confirmed) async {
-      if (confirmed == true) {
+    );
+    if (confirmed != true || !mounted) return;
+    await runGuardedMutation(
+      context: context,
+      failureMessage: 'Failed to delete fund.',
+      action: () async {
         await RMinderDatabase.instance.deleteSinkingFundCascade(fund.id!);
         await _loadFunds();
+      },
+      onSuccess: () async {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fund "${fund.name}" deleted.')));
-      }
-    });
+      },
+    );
   }
 
-  void _contribute(List<models.SinkingFund> _funds, Map<int, double> _contribThisMonth, int index) async {
-    final fund = _funds[index];
-    final contributed = _contribThisMonth[fund.id!] ?? 0.0;
+  Future<void> _contribute(List<models.SinkingFund> funds, Map<int, double> contribThisMonth, int index) async {
+    final fund = funds[index];
+    final contributed = contribThisMonth[fund.id!] ?? 0.0;
+    final appState = Provider.of<AppState>(context, listen: false);
     final remainingPlan = (fund.monthlyContribution - contributed).clamp(0, double.infinity);
     final ctrl = TextEditingController(text: remainingPlan.toStringAsFixed(2));
-    showDialog(
+    await showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: Text('Contribute to ${fund.name}') ,
@@ -189,9 +200,17 @@ class _SavingsScreenState extends State<SavingsScreen> {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid amount.')));
                 return;
               }
-              await RMinderDatabase.instance.contributeToFund(fund, amt);
-              await Provider.of<AppState>(context, listen: false).loadAllData();
-              if (mounted) Navigator.pop(context);
+              await runGuardedMutation(
+                context: context,
+                failureMessage: 'Failed to contribute to fund.',
+                action: () async {
+                  await RMinderDatabase.instance.contributeToFund(fund, amt);
+                  await appState.loadAllData();
+                },
+                onSuccess: () async {
+                  if (context.mounted) Navigator.pop(context);
+                },
+              );
             },
             child: const Text('Confirm'),
           ),
@@ -200,11 +219,12 @@ class _SavingsScreenState extends State<SavingsScreen> {
     );
   }
 
-  void _withdraw(List<models.SinkingFund> _funds, int index) async {
-    final fund = _funds[index];
+  Future<void> _withdraw(List<models.SinkingFund> funds, int index) async {
+    final fund = funds[index];
+    final appState = Provider.of<AppState>(context, listen: false);
     final ctrl = TextEditingController(text: '0.00');
     final noteCtrl = TextEditingController(text: '');
-    showDialog(
+    await showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: Text('Spend from ${fund.name}'),
@@ -241,9 +261,21 @@ class _SavingsScreenState extends State<SavingsScreen> {
                     .showSnackBar(const SnackBar(content: Text('Amount exceeds available balance.')));
                 return;
               }
-              await RMinderDatabase.instance.spendFromFund(fund, amt, note: noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
-              await Provider.of<AppState>(context, listen: false).loadAllData();
-              if (mounted) Navigator.pop(context);
+              await runGuardedMutation(
+                context: context,
+                failureMessage: 'Failed to spend from fund.',
+                action: () async {
+                  await RMinderDatabase.instance.spendFromFund(
+                    fund,
+                    amt,
+                    note: noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim(),
+                  );
+                  await appState.loadAllData();
+                },
+                onSuccess: () async {
+                  if (context.mounted) Navigator.pop(context);
+                },
+              );
             },
             child: const Text('Confirm'),
           ),
@@ -255,77 +287,74 @@ class _SavingsScreenState extends State<SavingsScreen> {
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
-    final _funds = appState.sinkingFunds;
-    final _contribThisMonth = appState.contributedToFundsThisMonth;
+    final funds = appState.sinkingFunds;
+    final contribThisMonth = appState.contributedToFundsThisMonth;
     return Scaffold(
   appBar: AppBar(title: const Text('Savings'), actions: buildGlobalAppBarActions(context)),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: kCompactPagePadding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ElevatedButton.icon(
               icon: const Icon(Icons.add),
               label: const Text('Add Fund'),
-              onPressed: () => _addOrEditFund(_funds),
+              onPressed: () => _addOrEditFund(funds),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: kCompactSectionGap),
             Expanded(
-              child: _funds.isEmpty
+              child: funds.isEmpty
                   ? const Center(child: Text('No funds yet.'))
                   : Scrollbar(
                       controller: _scroll,
                       thumbVisibility: true,
                       child: ListView.builder(
                         controller: _scroll,
-                        itemCount: _funds.length,
+                        itemCount: funds.length,
                         itemBuilder: (context, index) {
-                          final f = _funds[index];
+                          final f = funds[index];
                           final progress = f.targetAmount <= 0 ? 0.0 : (f.balance / f.targetAmount).clamp(0.0, 1.0);
-                          final contributed = _contribThisMonth[f.id ?? -1] ?? 0.0;
-                          return Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(12.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          f.name,
-                                          style: Theme.of(context).textTheme.titleMedium,
-                                        ),
+                          final contributed = contribThisMonth[f.id ?? -1] ?? 0.0;
+                          return CompactSectionCard(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        f.name,
+                                        style: Theme.of(context).textTheme.titleMedium,
                                       ),
-                                      IconButton(
-                                        tooltip: 'Contribute',
-                                        icon: const Icon(Icons.add_card),
-                                        onPressed: () => _contribute(_funds, _contribThisMonth, index),
-                                      ),
-                                      IconButton(
-                                        tooltip: 'Spend',
-                                        icon: const Icon(Icons.remove_circle_outline, color: Colors.orange),
-                                        onPressed: () => _withdraw(_funds, index),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.edit, color: Colors.blue),
-                                        tooltip: 'Edit',
-                                        onPressed: () => _addOrEditFund(_funds, index: index),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete, color: Colors.red),
-                                        tooltip: 'Delete',
-                                        onPressed: () => _deleteFund(_funds, index),
-                                      ),
-                                    ],
-                                  ),
-                                  Text('Balance: \u20b9${f.balance.toStringAsFixed(2)} / Target: \u20b9${f.targetAmount.toStringAsFixed(2)}'),
-                                  const SizedBox(height: 6),
-                                  LinearProgressIndicator(value: progress),
-                                  const SizedBox(height: 6),
-                                  Text('Monthly: \u20b9${f.monthlyContribution.toStringAsFixed(2)} | Contributed: \u20b9${contributed.toStringAsFixed(2)}'),
-                                ],
-                              ),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Contribute',
+                                      icon: const Icon(Icons.add_card),
+                                      onPressed: () => _contribute(funds, contribThisMonth, index),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Spend',
+                                      icon: const Icon(Icons.remove_circle_outline, color: Colors.orange),
+                                      onPressed: () => _withdraw(funds, index),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.edit, color: Colors.blue),
+                                      tooltip: 'Edit',
+                                      onPressed: () => _addOrEditFund(funds, index: index),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete, color: Colors.red),
+                                      tooltip: 'Delete',
+                                      onPressed: () => _deleteFund(funds, index),
+                                    ),
+                                  ],
+                                ),
+                                Text('Balance: ₹${f.balance.toStringAsFixed(2)} / Target: ₹${f.targetAmount.toStringAsFixed(2)}'),
+                                const SizedBox(height: 6),
+                                LinearProgressIndicator(value: progress),
+                                const SizedBox(height: 6),
+                                Text('Monthly: ₹${f.monthlyContribution.toStringAsFixed(2)} | Contributed: ₹${contributed.toStringAsFixed(2)}'),
+                              ],
                             ),
                           );
                         },

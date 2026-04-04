@@ -169,7 +169,6 @@ void main() {
       await NotificationService.instance.init();
       final granted = await NotificationService.instance.requestPermissions();
       if (granted) {
-        await AlertsService.scheduleDailyRecordReminder();
         await AlertsService.checkAndNotify();
       }
     } catch (_) {}
@@ -267,11 +266,82 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = ColorScheme.fromSeed(seedColor: const Color(0xFF0F766E));
+
     return MultiProvider(
       providers: [ChangeNotifierProvider(create: (_) => AppState())],
       child: MaterialApp(
         title: 'RMinder',
-        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple)),
+        theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: scheme,
+          scaffoldBackgroundColor: const Color(0xFFF4F7F9),
+          visualDensity: VisualDensity.compact,
+          appBarTheme: AppBarTheme(
+            backgroundColor: scheme.surface,
+            foregroundColor: scheme.onSurface,
+            scrolledUnderElevation: 0,
+            toolbarHeight: 48,
+            titleSpacing: 12,
+          ),
+          cardTheme: CardThemeData(
+            elevation: 1.5,
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            surfaceTintColor: Colors.transparent,
+            clipBehavior: Clip.antiAlias,
+          ),
+          listTileTheme: const ListTileThemeData(
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          ),
+          inputDecorationTheme: InputDecorationTheme(
+            isDense: true,
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: scheme.outline.withValues(alpha: 0.4)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: scheme.primary, width: 1.5),
+            ),
+          ),
+          elevatedButtonTheme: ElevatedButtonThemeData(
+            style: ElevatedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+          outlinedButtonTheme: OutlinedButtonThemeData(
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+          textButtonTheme: TextButtonThemeData(
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+          ),
+          bottomNavigationBarTheme: BottomNavigationBarThemeData(
+            type: BottomNavigationBarType.fixed,
+            selectedItemColor: scheme.primary,
+            unselectedItemColor: scheme.onSurfaceVariant,
+            selectedIconTheme: IconThemeData(color: scheme.primary),
+            unselectedIconTheme: IconThemeData(color: scheme.onSurfaceVariant),
+            selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+            unselectedLabelStyle: const TextStyle(fontSize: 12),
+            elevation: 8,
+          ),
+        ),
         navigatorKey: NavigationService.instance.navigatorKey,
         home: const MainScreen(),
       ),
@@ -338,12 +408,7 @@ class _MainScreenState extends State<MainScreen> {
         bottomNavigationBar: BottomNavigationBar(
           currentIndex: _selectedIndex,
           onTap: (i) => setState(() => _selectedIndex = i),
-          selectedItemColor: Colors.deepPurple.shade800,
-          unselectedItemColor: Colors.deepPurple.shade800,
-          selectedIconTheme: IconThemeData(color: Colors.deepPurple.shade800),
-          unselectedIconTheme: IconThemeData(color: Colors.deepPurple.shade800),
-          selectedLabelStyle: TextStyle(color: Colors.deepPurple.shade800),
-          unselectedLabelStyle: TextStyle(color: Colors.deepPurple.shade800),
+          iconSize: 20,
           items: const [
             BottomNavigationBarItem(icon: Icon(Icons.account_balance_wallet), label: 'Budget'),
             BottomNavigationBarItem(icon: Icon(Icons.list), label: 'Transactions'),

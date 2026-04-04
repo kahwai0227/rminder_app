@@ -163,7 +163,7 @@ class _ChartLegendState extends State<_ChartLegend> {
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.3)),
+                border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.3)),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,

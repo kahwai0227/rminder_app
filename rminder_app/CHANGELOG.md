@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.5.0] - 2026-04-04
+
+### Highlights
+- Major reliability and reporting release focused on historical accuracy, shared calculation logic, actionable insights, and a compact unified UI system.
+
+### Added
+- Atomic close-period pipeline with transactional snapshot writes to prevent partial period-close states.
+- Integration-style rollback test coverage for close-period atomicity.
+- Shared overview metrics service used across Budget and Reports to keep planned/spent/remaining/progress in sync.
+- Shared active overview input selector to standardize category filtering and period-bounded spend calculations.
+- Period Comparison insights in Reports with a line chart trend over up to 10 periods (spending, debt paid, savings).
+- Mutation guard + user-friendly mutation error mapping for safer writes and clearer failure messages.
+- Reusable compact card components for tighter, consistent layouts across key screens.
+
+### Changed
+- Reports section order is now:
+	- Overview
+	- Spending by Category
+	- Savings
+	- Debt
+	- Budget Allocation
+	- Period Comparison
+- Period Comparison tooltip redesigned for readability:
+	- higher-contrast styling
+	- date shown once
+	- aligned one-line metric rows
+	- content-height-fit behavior
+- App-wide theme updated to a unified compact Material 3 style for denser, more consistent UI.
+- Notification reminders now focus on pending actions in the active period:
+	- track spending if not logged
+	- make debt payments if planned amounts remain
+	- contribute to savings if planned contributions remain
+
+### Fixed
+- Budget overview refresh/state sync issues that caused stale values.
+- Budget and Reports spent-value mismatches by aligning category scope and shared formulas.
+- Multiple analyzer warnings and API deprecations across screens/services.
+- Async context and lifecycle edge cases in several mutation flows.
+
+### Quality
+- Analyzer clean.
+- Expanded automated tests, including mutation guard/error handling and overview parity coverage.
+
 ## [1.4.1] - 2025-12-18
 
 ### Fixed

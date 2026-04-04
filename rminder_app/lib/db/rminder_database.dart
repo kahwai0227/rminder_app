@@ -344,6 +344,14 @@ class RMinderDatabase {
     return await db.delete('categories', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<void> deleteCategoryCascade(int categoryId) async {
+    final db = await instance.database;
+    await db.transaction((txn) async {
+      await txn.delete('transactions', where: 'categoryId = ?', whereArgs: [categoryId]);
+      await txn.delete('categories', where: 'id = ?', whereArgs: [categoryId]);
+    });
+  }
+
   // CRUD for Transaction
   Future<int> insertTransaction(models.Transaction txn) async {
     final db = await instance.database;
@@ -609,6 +617,7 @@ class RMinderDatabase {
     final db = _database;
     if (db != null) {
       await db.close();
+      _database = null;
     }
   }
 
@@ -903,6 +912,153 @@ class RMinderDatabase {
     );
     final total = (result.first['total'] ?? 0) as num;
     return total.toDouble();
+  }
+
+  Future<void> closePeriodAtomic({
+    required DateTime periodStart,
+    required DateTime closeAt,
+    required DateTime nextStart,
+    required String action,
+    required double totalLeftover,
+    int? transferCategoryId,
+    String? transferNote,
+    required List<models.BudgetCategory> categories,
+    required List<models.IncomeSource> incomeSources,
+    required List<models.Liability> liabilities,
+    required List<models.SinkingFund> sinkingFunds,
+    required Map<int, double> spentByCategory,
+    required Map<int, double> paidByLiabilityId,
+    required Map<int, double> contributedByFundId,
+  }) async {
+    final db = await instance.database;
+    final periodStartIso = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+
+    await db.transaction((txn) async {
+      // Snapshot budgets.
+      for (final c in categories) {
+        if (c.id == null) continue;
+        await txn.insert(
+          'budget_snapshots',
+          {
+            'period_start': periodStartIso,
+            'category_id': c.id,
+            'category_name': c.name,
+            'budget_limit': c.budgetLimit,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // Snapshot incomes.
+      await txn.delete('income_snapshots', where: 'period_start = ?', whereArgs: [periodStartIso]);
+      for (final source in incomeSources) {
+        await txn.insert('income_snapshots', {
+          'period_start': periodStartIso,
+          'source_name': source.name,
+          'amount': source.amount,
+        });
+      }
+
+      // Snapshot spending by category.
+      for (final c in categories) {
+        if (c.id == null) continue;
+        await txn.insert(
+          'spending_snapshots',
+          {
+            'period_start': periodStartIso,
+            'category_id': c.id,
+            'category_name': c.name,
+            'spent': spentByCategory[c.id!] ?? 0.0,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // Snapshot liabilities.
+      for (final liab in liabilities) {
+        if (liab.id == null) continue;
+        await txn.insert(
+          'liability_snapshots',
+          {
+            'period_start': periodStartIso,
+            'liability_id': liab.id,
+            'liability_name': liab.name,
+            'category_id': liab.budgetCategoryId,
+            'planned': liab.planned,
+            'paid': paidByLiabilityId[liab.id!] ?? 0.0,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // Snapshot funds.
+      for (final fund in sinkingFunds) {
+        if (fund.id == null) continue;
+        await txn.insert(
+          'fund_snapshots',
+          {
+            'period_start': periodStartIso,
+            'fund_id': fund.id,
+            'fund_name': fund.name,
+            'category_id': fund.budgetCategoryId,
+            'monthly_contribution': fund.monthlyContribution,
+            'contributed': contributedByFundId[fund.id!] ?? 0.0,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // Auto-archive fully paid liabilities.
+      for (final liab in liabilities.where((l) => !l.isArchived && l.balance <= 0 && l.id != null)) {
+        await txn.update('liabilities', {'is_archived': 1}, where: 'id = ?', whereArgs: [liab.id]);
+      }
+
+      if (action == 'carryIncome') {
+        final y = nextStart.year.toString().padLeft(4, '0');
+        final m = nextStart.month.toString().padLeft(2, '0');
+        final d = nextStart.day.toString().padLeft(2, '0');
+        final carryKey = 'carry_income:$y-$m-$d';
+        await txn.insert(
+          'settings',
+          {'key': carryKey, 'value': totalLeftover.toStringAsFixed(2)},
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      if (action == 'payDebt' || action == 'contributeFund') {
+        if (transferCategoryId == null) {
+          throw ArgumentError('transferCategoryId is required for $action');
+        }
+        await txn.insert(
+          'transactions',
+          {
+            'categoryId': transferCategoryId,
+            'amount': totalLeftover,
+            'date': closeAt.toIso8601String(),
+            'note': transferNote,
+          },
+        );
+        await _adjustLiabilityBalanceForCategory(txn, transferCategoryId, -totalLeftover);
+        await _adjustSinkingFundBalanceForCategory(txn, transferCategoryId, totalLeftover);
+        await _updateCategorySpent(transferCategoryId, txn);
+      }
+
+      await txn.insert(
+        'closed_months',
+        {
+          'month_start': periodStartIso,
+          'closed_at': closeAt.toIso8601String(),
+          'action': action,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+
+      await txn.insert(
+        'settings',
+        {'key': _activePeriodStartKey, 'value': nextStart.toIso8601String()},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
   }
 
   // Record that a month has been closed

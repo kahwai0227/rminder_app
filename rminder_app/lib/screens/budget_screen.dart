@@ -4,12 +4,16 @@ import '../providers/app_state.dart';
 import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/logger.dart';
+import '../utils/mutation_guard.dart';
+import '../services/overview_input_selector_service.dart';
+import '../services/overview_metrics_service.dart';
+import '../widgets/compact_cards.dart';
 import '../main.dart' show TabSwitcher; // reuse the inherited widget
 import '../utils/currency_input_formatter.dart';
 import '../main.dart' show buildGlobalAppBarActions;
 
 class BudgetPage extends StatefulWidget {
-  const BudgetPage({Key? key}) : super(key: key);
+  const BudgetPage({super.key});
   @override
   State<BudgetPage> createState() => _BudgetPageState();
 }
@@ -21,7 +25,10 @@ class _BudgetPageState extends State<BudgetPage> {
   @override
   void initState() {
     super.initState();
-    _loadCarryIncome();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _refreshBudgetData();
+    });
   }
 
   @override
@@ -46,6 +53,17 @@ class _BudgetPageState extends State<BudgetPage> {
         final val = double.tryParse(str ?? '0') ?? 0.0;
         if (mounted) setState(() => _carryIncome = val);
       }
+    } catch (e, st) {
+      logError(e, st);
+    }
+  }
+
+  Future<void> _refreshBudgetData() async {
+    try {
+      final appState = Provider.of<AppState>(context, listen: false);
+      await appState.refresh();
+      if (!mounted) return;
+      await _loadCarryIncome();
     } catch (e, st) {
       logError(e, st);
     }
@@ -138,11 +156,19 @@ class _BudgetPageState extends State<BudgetPage> {
                     .showSnackBar(const SnackBar(content: Text('Amount must be greater than 0.')));
                 return;
               }
-              await RMinderDatabase.instance.insertIncomeSource(models.IncomeSource(name: name, amount: amount));
-              if (mounted) {
-                Provider.of<AppState>(context, listen: false).refresh();
-                Navigator.pop(context);
-              }
+              await runGuardedMutation(
+                context: context,
+                failureMessage: 'Failed to add income source.',
+                action: () async {
+                  await RMinderDatabase.instance.insertIncomeSource(
+                    models.IncomeSource(name: name, amount: amount),
+                  );
+                },
+                onSuccess: () async {
+                  await Provider.of<AppState>(context, listen: false).refresh();
+                  if (context.mounted) Navigator.pop(context);
+                },
+              );
             },
             child: const Text('Add'),
           ),
@@ -177,9 +203,18 @@ class _BudgetPageState extends State<BudgetPage> {
           ElevatedButton(
             onPressed: () async {
               final amount = double.tryParse(controller.text.trim()) ?? 0.0;
-              await RMinderDatabase.instance.setSetting(key, amount.toStringAsFixed(2));
-              if (mounted) setState(() => _carryIncome = amount);
-              if (mounted) Navigator.pop(context);
+              await runGuardedMutation(
+                context: context,
+                failureMessage: 'Failed to save carry-forward income.',
+                action: () async {
+                  await RMinderDatabase.instance.setSetting(key, amount.toStringAsFixed(2));
+                },
+                onSuccess: () async {
+                  if (!mounted) return;
+                  setState(() => _carryIncome = amount);
+                  if (context.mounted) Navigator.pop(context);
+                },
+              );
             },
             child: const Text('Save'),
           ),
@@ -204,11 +239,20 @@ class _BudgetPageState extends State<BudgetPage> {
         ],
       ),
     );
-    if (confirm != true) return;
+    if (confirm != true || !mounted) return;
     final period = state.activePeriodStart!;
     final key = 'carry_income:${period.year.toString().padLeft(4, '0')}-${period.month.toString().padLeft(2, '0')}-${period.day.toString().padLeft(2, '0')}';
-    await RMinderDatabase.instance.deleteSetting(key);
-    if (mounted) setState(() => _carryIncome = 0.0);
+    await runGuardedMutation(
+      context: context,
+      failureMessage: 'Failed to delete carry-forward income.',
+      action: () async {
+        await RMinderDatabase.instance.deleteSetting(key);
+      },
+      onSuccess: () async {
+        if (!mounted) return;
+        setState(() => _carryIncome = 0.0);
+      },
+    );
   }
 
   Future<void> _deleteIncomeSource(int id) async {
@@ -223,9 +267,17 @@ class _BudgetPageState extends State<BudgetPage> {
         ],
       ),
     );
-    if (shouldDelete == true) {
-      await RMinderDatabase.instance.deleteIncomeSource(id);
-      if (mounted) Provider.of<AppState>(context, listen: false).refresh();
+    if (shouldDelete == true && mounted) {
+      await runGuardedMutation(
+        context: context,
+        failureMessage: 'Failed to delete income source.',
+        action: () async {
+          await RMinderDatabase.instance.deleteIncomeSource(id);
+        },
+        onSuccess: () async {
+          await Provider.of<AppState>(context, listen: false).refresh();
+        },
+      );
     }
   }
 
@@ -280,13 +332,19 @@ class _BudgetPageState extends State<BudgetPage> {
                     .showSnackBar(const SnackBar(content: Text('Amount must be greater than 0.')));
                 return;
               }
-              await RMinderDatabase.instance.updateIncomeSource(
-                models.IncomeSource(id: source.id, name: name, amount: amount),
+              await runGuardedMutation(
+                context: context,
+                failureMessage: 'Failed to update income source.',
+                action: () async {
+                  await RMinderDatabase.instance.updateIncomeSource(
+                    models.IncomeSource(id: source.id, name: name, amount: amount),
+                  );
+                },
+                onSuccess: () async {
+                  await Provider.of<AppState>(context, listen: false).refresh();
+                  if (context.mounted) Navigator.pop(context);
+                },
               );
-              if (mounted) {
-                Provider.of<AppState>(context, listen: false).refresh();
-                Navigator.pop(context);
-              }
             },
             child: const Text('Save'),
           ),
@@ -325,7 +383,7 @@ class _BudgetPageState extends State<BudgetPage> {
                       children: [
                         Expanded(
                           child: DropdownButtonFormField<String>(
-                            value: selectedCatId,
+                            initialValue: selectedCatId,
                             decoration: const InputDecoration(labelText: 'Select Category'),
                             items: [
                               ...unbudgeted.map((c) => DropdownMenuItem(value: c.id.toString(), child: Text(c.name))),
@@ -343,6 +401,7 @@ class _BudgetPageState extends State<BudgetPage> {
                             onPressed: () async {
                               final cat = unbudgeted.firstWhere((c) => c.id.toString() == selectedCatId);
                               final hasTransactions = await RMinderDatabase.instance.hasTransactionsForCategory(cat.id ?? 0);
+                              if (!context.mounted) return;
                               final confirm = await showDialog<bool>(
                                 context: context,
                                 builder: (ctx) => AlertDialog(
@@ -363,15 +422,22 @@ class _BudgetPageState extends State<BudgetPage> {
                                 ),
                               );
                               
-                              if (confirm == true && mounted) {
-                                await RMinderDatabase.instance.deleteTransactionsForCategory(cat.id ?? 0);
-                                await RMinderDatabase.instance.deleteCategory(cat.id!);
-                                if (mounted) {
+                              if (confirm != true || !context.mounted) return;
+                              await runGuardedMutation(
+                                context: context,
+                                failureMessage: 'Failed to delete category.',
+                                action: () async {
+                                  await RMinderDatabase.instance.deleteCategoryCascade(cat.id!);
+                                },
+                                onSuccess: () async {
+                                  await Provider.of<AppState>(context, listen: false).refresh();
+                                  if (!context.mounted) return;
                                   Navigator.pop(context); // close the Add Budget dialog
-                                  Provider.of<AppState>(context, listen: false).refresh();
-                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Category completely deleted.')));
-                                }
-                              }
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Category completely deleted.')),
+                                  );
+                                },
+                              );
                             },
                           ),
                       ],
@@ -450,23 +516,41 @@ class _BudgetPageState extends State<BudgetPage> {
                 if (selectedCatId == 'new') {
                   final name = nameController.text.trim();
                   if (name.isNotEmpty) {
-                    await RMinderDatabase.instance.insertCategory(
-                      models.BudgetCategory(name: name, budgetLimit: budgetLimit, spent: 0, inBudget: true),
+                    await runGuardedMutation(
+                      context: context,
+                      failureMessage: 'Failed to add budget category.',
+                      action: () async {
+                        await RMinderDatabase.instance.insertCategory(
+                          models.BudgetCategory(name: name, budgetLimit: budgetLimit, spent: 0, inBudget: true),
+                        );
+                      },
+                      onSuccess: () async {
+                        await Provider.of<AppState>(context, listen: false).refresh();
+                        if (context.mounted) Navigator.pop(context);
+                      },
                     );
-                    if (mounted) {
-                      Provider.of<AppState>(context, listen: false).refresh();
-                      Navigator.pop(context);
-                    }
                   }
                 } else {
                   final cat = unbudgeted.firstWhere((c) => c.id.toString() == selectedCatId);
-                  await RMinderDatabase.instance.updateCategory(
-                    models.BudgetCategory(id: cat.id, name: cat.name, budgetLimit: budgetLimit, spent: cat.spent, inBudget: true),
+                  await runGuardedMutation(
+                    context: context,
+                    failureMessage: 'Failed to add category to budget.',
+                    action: () async {
+                      await RMinderDatabase.instance.updateCategory(
+                        models.BudgetCategory(
+                          id: cat.id,
+                          name: cat.name,
+                          budgetLimit: budgetLimit,
+                          spent: cat.spent,
+                          inBudget: true,
+                        ),
+                      );
+                    },
+                    onSuccess: () async {
+                      await Provider.of<AppState>(context, listen: false).refresh();
+                      if (context.mounted) Navigator.pop(context);
+                    },
                   );
-                  if (mounted) {
-                    Provider.of<AppState>(context, listen: false).refresh();
-                    Navigator.pop(context);
-                  }
                 }
               }
             },
@@ -569,16 +653,22 @@ class _BudgetPageState extends State<BudgetPage> {
               final name = nameController.text.trim();
               final budgetLimit = double.tryParse(limitController.text.trim().replaceAll(',', '')) ?? 0;
               if (name.isNotEmpty && budgetLimit > 0) {
-                await RMinderDatabase.instance.updateCategory(models.BudgetCategory(
-                  id: category.id,
-                  name: name,
-                  budgetLimit: budgetLimit,
-                  spent: category.spent,
-                ));
-                if (mounted) {
-                  Provider.of<AppState>(context, listen: false).refresh();
-                  Navigator.pop(context);
-                }
+                await runGuardedMutation(
+                  context: context,
+                  failureMessage: 'Failed to update category.',
+                  action: () async {
+                    await RMinderDatabase.instance.updateCategory(models.BudgetCategory(
+                      id: category.id,
+                      name: name,
+                      budgetLimit: budgetLimit,
+                      spent: category.spent,
+                    ));
+                  },
+                  onSuccess: () async {
+                    await Provider.of<AppState>(context, listen: false).refresh();
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                );
               }
             },
             child: const Text('Save'),
@@ -600,11 +690,25 @@ class _BudgetPageState extends State<BudgetPage> {
         ],
       ),
     );
-    if (shouldRemove == true) {
-      await RMinderDatabase.instance.updateCategory(
-        models.BudgetCategory(id: category.id, name: category.name, budgetLimit: category.budgetLimit, spent: category.spent, inBudget: false),
+    if (shouldRemove == true && mounted) {
+      await runGuardedMutation(
+        context: context,
+        failureMessage: 'Failed to remove category from budget.',
+        action: () async {
+          await RMinderDatabase.instance.updateCategory(
+            models.BudgetCategory(
+              id: category.id,
+              name: category.name,
+              budgetLimit: category.budgetLimit,
+              spent: category.spent,
+              inBudget: false,
+            ),
+          );
+        },
+        onSuccess: () async {
+          await Provider.of<AppState>(context, listen: false).refresh();
+        },
       );
-      if (mounted) Provider.of<AppState>(context, listen: false).refresh();
     }
   }
 
@@ -631,7 +735,7 @@ class _BudgetPageState extends State<BudgetPage> {
               _buildSummaryDashboard(context, totalInc, categories, appState),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.all(16.0),
+                  padding: kCompactPagePadding,
                   child: Scrollbar(
                     controller: _budgetScroll,
                     thumbVisibility: true,
@@ -640,10 +744,8 @@ class _BudgetPageState extends State<BudgetPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12.0),
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    CompactSectionCard(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                             const Text('Income', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                             Row(children: [
@@ -658,7 +760,7 @@ class _BudgetPageState extends State<BudgetPage> {
                           ]),
                           const SizedBox(height: 10),
                           if (_carryIncome > 0)
-                            Card(
+                            CompactItemCard(
                               child: ListTile(
                                 title: Text('Carry-forward', style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
                                 subtitle: Text('Amount: ₹${_carryIncome.toStringAsFixed(2)}'),
@@ -671,7 +773,7 @@ class _BudgetPageState extends State<BudgetPage> {
                           incomeSources.isEmpty
                               ? const Center(child: Text('No income sources yet.'))
                               : Column(
-                                  children: incomeSources.map((src) => Card(
+                                  children: incomeSources.map((src) => CompactItemCard(
                                     child: ListTile(
                                       title: Text(src.name, style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
                                       subtitle: Text('Amount: ₹${src.amount.toStringAsFixed(2)}'),
@@ -683,13 +785,10 @@ class _BudgetPageState extends State<BudgetPage> {
                                   )).toList(),
                                 ),
                         ]),
-                      ),
                     ),
-                    const SizedBox(height: 10),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12.0),
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const SizedBox(height: kCompactSectionGap),
+                    CompactSectionCard(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                             const Text('Budget', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                             ElevatedButton.icon(
@@ -723,7 +822,7 @@ class _BudgetPageState extends State<BudgetPage> {
                             .where((c) =>
                               !liabilities.any((l) => l.budgetCategoryId == c.id) &&
                               !sinkingFunds.any((f) => f.budgetCategoryId == c.id))
-                              .map((category) => Card(
+                              .map((category) => CompactItemCard(
                                     child: ListTile(
                                       key: ValueKey(category.id),
                                       title: Column(
@@ -762,7 +861,7 @@ class _BudgetPageState extends State<BudgetPage> {
                               child: Text('No liabilities added yet.'),
                             )
                           else
-                            ...liabilities.map((liab) => Card(
+                            ...liabilities.map((liab) => CompactItemCard(
                                   child: ListTile(
                                     key: ValueKey('liab-${liab.id}'),
                                     title: Column(
@@ -803,7 +902,7 @@ class _BudgetPageState extends State<BudgetPage> {
                               child: Text('No savings funds added yet.'),
                             )
                           else
-                            ...sinkingFunds.map((fund) => Card(
+                            ...sinkingFunds.map((fund) => CompactItemCard(
                                   child: ListTile(
                                     key: ValueKey('fund-${fund.id}'),
                                     title: Column(
@@ -826,7 +925,6 @@ class _BudgetPageState extends State<BudgetPage> {
                                   ),
                                 )),
                         ]),
-                      ),
                     ),
                   ],
                 ),
@@ -848,32 +946,42 @@ class _BudgetPageState extends State<BudgetPage> {
     AppState appState,
   ) {
     final theme = Theme.of(context);
-    final totalPlanned = categories.fold(0.0, (sum, c) => sum + c.budgetLimit);
-    final totalSpent = _activePeriodSpent(appState, categories);
-    final isOverBudget = totalSpent > totalPlanned && totalPlanned > 0;
-    final progress = totalPlanned > 0
-        ? (totalSpent / totalPlanned).clamp(0.0, 1.0)
-        : 0.0;
-    final remaining = (totalPlanned - totalSpent).clamp(0.0, double.infinity);
+    final selection = selectActiveOverviewSelection(
+      categories: categories,
+      transactions: appState.transactions,
+      liabilities: appState.liabilities,
+      sinkingFunds: appState.sinkingFunds,
+      periodStart: appState.activePeriodStart,
+      periodEndExclusive: _activePeriodEndExclusive(),
+    );
+
+    final metrics = calculateOverviewMetrics(
+      selection.categories.map(
+        (c) => OverviewMetricItem(
+          planned: c.budgetLimit,
+          spent: selection.spentByCategory[c.id!] ?? 0.0,
+        ),
+      ),
+    );
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
       child: Card(
-        elevation: 4,
+        elevation: 2,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             gradient: LinearGradient(
               colors: [
-                theme.colorScheme.primaryContainer.withOpacity(0.7),
+                theme.colorScheme.primaryContainer.withValues(alpha: 0.7),
                 theme.colorScheme.surface,
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(12.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -902,13 +1010,13 @@ class _BudgetPageState extends State<BudgetPage> {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: isOverBudget
+                      color: metrics.isOverBudget
                           ? theme.colorScheme.error
                           : theme.colorScheme.primary,
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      isOverBudget ? 'Over Budget' : 'On Track',
+                      metrics.isOverBudget ? 'Over Budget' : 'On Track',
                       style: theme.textTheme.labelMedium?.copyWith(
                         color: theme.colorScheme.onPrimary,
                         fontWeight: FontWeight.bold,
@@ -917,36 +1025,36 @@ class _BudgetPageState extends State<BudgetPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _SummaryStat(
                     title: 'Planned',
-                    amount: totalPlanned,
+                    amount: metrics.planned,
                     color: theme.colorScheme.primary,
                   ),
                   _SummaryStat(
                     title: 'Spent',
-                    amount: totalSpent,
+                    amount: metrics.spent,
                     color: theme.colorScheme.error,
                   ),
                   _SummaryStat(
                     title: 'Remaining',
-                    amount: remaining,
+                    amount: metrics.remaining,
                     color: theme.colorScheme.tertiary,
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: LinearProgressIndicator(
-                  value: progress,
+                  value: metrics.progress,
                   minHeight: 10,
                   backgroundColor: theme.colorScheme.surfaceContainerHighest,
                   valueColor: AlwaysStoppedAnimation<Color>(
-                    isOverBudget
+                    metrics.isOverBudget
                         ? theme.colorScheme.error
                         : theme.colorScheme.primary,
                   ),
@@ -959,38 +1067,6 @@ class _BudgetPageState extends State<BudgetPage> {
     );
   }
 
-  double _activePeriodSpent(AppState state, List<models.BudgetCategory> categories) {
-    if (state.activePeriodStart == null) {
-      return categories.fold(0.0, (sum, c) => sum + c.spent);
-    }
-
-    // Keep period boundary behavior aligned with reports_screen.dart.
-    final periodStart = state.activePeriodStart!;
-    final periodEndExclusive = _activePeriodEndExclusive();
-    final debtCategoryIds = state.liabilities.map((l) => l.budgetCategoryId).toSet();
-    final fundCategoryIds = state.sinkingFunds
-        .where((f) => f.budgetCategoryId != null)
-        .map((f) => f.budgetCategoryId!)
-        .toSet();
-
-    final expenseCategoryIds = categories
-        .where((c) => c.id != null)
-        .where((c) => !debtCategoryIds.contains(c.id))
-        .where((c) => !fundCategoryIds.contains(c.id))
-        .map((c) => c.id!)
-        .toSet();
-
-    double spent = 0.0;
-    for (final tx in state.transactions) {
-      final inActivePeriod =
-          !tx.date.isBefore(periodStart) && tx.date.isBefore(periodEndExclusive);
-      if (inActivePeriod && tx.amount > 0 && expenseCategoryIds.contains(tx.categoryId)) {
-        spent += tx.amount;
-      }
-    }
-
-    return spent < 0 ? 0.0 : spent;
-  }
 }
 
 class _SummaryStat extends StatelessWidget {

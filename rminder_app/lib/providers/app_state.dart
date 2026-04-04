@@ -14,10 +14,10 @@ class AppState extends ChangeNotifier {
   List<models.SinkingFund> sinkingFunds = [];
   List<models.IncomeSource> incomeSources = [];
 
-  Map<int, double> _paidLiabilitiesThisMonth = {};
+  final Map<int, double> _paidLiabilitiesThisMonth = {};
   Map<int, double> get paidLiabilitiesThisMonth => _paidLiabilitiesThisMonth;
 
-  Map<int, double> _contributedToFundsThisMonth = {};
+  final Map<int, double> _contributedToFundsThisMonth = {};
   Map<int, double> get contributedToFundsThisMonth => _contributedToFundsThisMonth;
 
   DateTime? activePeriodStart;

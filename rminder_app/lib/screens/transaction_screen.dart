@@ -5,10 +5,12 @@ import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
 import '../utils/logger.dart';
 import '../utils/currency_input_formatter.dart';
+import '../utils/mutation_guard.dart';
+import '../widgets/compact_cards.dart';
 import '../main.dart' show buildGlobalAppBarActions;
 
 class TransactionsPage extends StatefulWidget {
-  const TransactionsPage({Key? key}) : super(key: key);
+  const TransactionsPage({super.key});
   @override
   State<TransactionsPage> createState() => _TransactionsPageState();
 }
@@ -280,16 +282,22 @@ class _TransactionsPageState extends State<TransactionsPage> {
                     .showSnackBar(const SnackBar(content: Text('Amount must be greater than 0.')));
                 return;
               }
-              await RMinderDatabase.instance.insertTransaction(models.Transaction(
-                categoryId: catId,
-                amount: amount,
-                date: selectedDate,
-                note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-              ));
-              if (mounted) {
-                Provider.of<AppState>(context, listen: false).refresh();
-                Navigator.pop(context);
-              }
+              await runGuardedMutation(
+                context: context,
+                failureMessage: 'Failed to add transaction.',
+                action: () async {
+                  await RMinderDatabase.instance.insertTransaction(models.Transaction(
+                    categoryId: catId,
+                    amount: amount,
+                    date: selectedDate,
+                    note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+                  ));
+                },
+                onSuccess: () async {
+                  await Provider.of<AppState>(context, listen: false).refresh();
+                  if (context.mounted) Navigator.pop(context);
+                },
+              );
             },
             child: const Text('Add'),
           ),
@@ -391,17 +399,23 @@ class _TransactionsPageState extends State<TransactionsPage> {
                     .showSnackBar(const SnackBar(content: Text('Amount must be greater than 0.')));
                 return;
               }
-              await RMinderDatabase.instance.updateTransaction(models.Transaction(
-                id: txn.id,
-                categoryId: catId,
-                amount: amount,
-                date: selectedDate,
-                note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-              ));
-              if (mounted) {
-                Provider.of<AppState>(context, listen: false).refresh();
-                Navigator.pop(context);
-              }
+              await runGuardedMutation(
+                context: context,
+                failureMessage: 'Failed to update transaction.',
+                action: () async {
+                  await RMinderDatabase.instance.updateTransaction(models.Transaction(
+                    id: txn.id,
+                    categoryId: catId,
+                    amount: amount,
+                    date: selectedDate,
+                    note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+                  ));
+                },
+                onSuccess: () async {
+                  await Provider.of<AppState>(context, listen: false).refresh();
+                  if (context.mounted) Navigator.pop(context);
+                },
+              );
             },
             child: const Text('Save'),
           ),
@@ -426,11 +440,17 @@ class _TransactionsPageState extends State<TransactionsPage> {
         ],
       ),
     );
-    if (confirmed == true) {
-      await RMinderDatabase.instance.deleteTransaction(txn.id!);
-      if (mounted) {
-        Provider.of<AppState>(context, listen: false).refresh();
-      }
+    if (confirmed == true && mounted) {
+      await runGuardedMutation(
+        context: context,
+        failureMessage: 'Failed to delete transaction.',
+        action: () async {
+          await RMinderDatabase.instance.deleteTransaction(txn.id!);
+        },
+        onSuccess: () async {
+          await Provider.of<AppState>(context, listen: false).refresh();
+        },
+      );
     }
   }
 
@@ -852,7 +872,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
             final filteredTxns = _getFilteredTransactions(appState);
 
             return Padding(
-              padding: const EdgeInsets.all(16.0),
+              padding: kCompactPagePadding,
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   ElevatedButton.icon(
@@ -866,7 +886,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                     onPressed: appState.categories.isEmpty ? null : () => _showAddTransactionDialog(appState),
                   ),
                 ]),
-                const SizedBox(height: 16),
+                const SizedBox(height: 10),
                 Expanded(
                   child: appState.categories.isEmpty
                       ? const Center(child: Text('No categories available. Add a category to begin.'))

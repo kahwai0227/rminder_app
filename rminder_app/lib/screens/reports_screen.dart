@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../db/rminder_database.dart';
@@ -9,10 +10,14 @@ import '../utils/ui_intents.dart';
 import '../utils/currency_input_formatter.dart';
 import '../services/period_service.dart';
 import '../services/notification_service.dart';
+import '../services/alerts_service.dart';
+import '../services/overview_input_selector_service.dart';
+import '../services/overview_metrics_service.dart';
+import '../widgets/compact_cards.dart';
 import 'user_guide.dart' show showUserGuide;
 
 class ReportingPage extends StatefulWidget {
-  const ReportingPage({Key? key}) : super(key: key);
+  const ReportingPage({super.key});
   @override
   State<ReportingPage> createState() => _ReportingPageState();
 }
@@ -42,6 +47,226 @@ class _OverviewStat extends StatelessWidget {
             fontWeight: FontWeight.bold,
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _PeriodComparisonTotals {
+  final double spending;
+  final double debtPaid;
+  final double savingsContributed;
+
+  const _PeriodComparisonTotals({
+    required this.spending,
+    required this.debtPaid,
+    required this.savingsContributed,
+  });
+}
+
+class _PeriodTrendPoint {
+  final DateTime periodStart;
+  final _PeriodComparisonTotals totals;
+
+  const _PeriodTrendPoint({
+    required this.periodStart,
+    required this.totals,
+  });
+}
+
+class _PeriodComparisonLineChart extends StatelessWidget {
+  final List<_PeriodTrendPoint> points;
+
+  const _PeriodComparisonLineChart({required this.points});
+
+  LineChartBarData _buildSeries({
+    required List<_PeriodTrendPoint> points,
+    required double Function(_PeriodComparisonTotals totals) valueOf,
+    required Color color,
+  }) {
+    return LineChartBarData(
+      spots: [
+        for (var i = 0; i < points.length; i++)
+          FlSpot(i.toDouble(), valueOf(points[i].totals)),
+      ],
+      isCurved: true,
+      color: color,
+      barWidth: 2.5,
+      dotData: const FlDotData(show: true),
+    );
+  }
+
+  String _shortLabel(DateTime d) => '${d.day}/${d.month}';
+
+  String _metricLine(String label, double value) {
+    final left = label.padRight(9);
+    final amount = '\$${value.toStringAsFixed(2)}'.padLeft(12);
+    return '$left: $amount';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (points.isEmpty) {
+      return const Text('No period data available yet.');
+    }
+
+    final maxY = points
+        .expand((p) => [
+              p.totals.spending,
+              p.totals.debtPaid,
+              p.totals.savingsContributed,
+            ])
+        .fold<double>(0, (m, v) => v > m ? v : m);
+    final chartMaxY = maxY <= 0 ? 1.0 : (maxY * 1.2);
+    final showEvery = points.length <= 5
+        ? 1
+        : points.length <= 8
+            ? 2
+            : 3;
+
+    final spendingColor = theme.colorScheme.error;
+    final debtColor = theme.colorScheme.primary;
+    final savingsColor = theme.colorScheme.tertiary;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 240,
+          child: LineChart(
+            LineChartData(
+              minX: 0,
+              maxX: (points.length - 1).toDouble(),
+              minY: 0,
+              maxY: chartMaxY,
+              gridData: FlGridData(
+                show: true,
+                drawVerticalLine: false,
+                horizontalInterval: chartMaxY / 4,
+              ),
+              borderData: FlBorderData(
+                show: true,
+                border: Border(
+                  left: BorderSide(color: theme.dividerColor.withValues(alpha: 0.5)),
+                  bottom: BorderSide(color: theme.dividerColor.withValues(alpha: 0.5)),
+                ),
+              ),
+              titlesData: FlTitlesData(
+                topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                leftTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 44,
+                    getTitlesWidget: (value, meta) => Text(
+                      '₹${value.toStringAsFixed(0)}',
+                      style: theme.textTheme.labelSmall,
+                    ),
+                  ),
+                ),
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    interval: 1,
+                    reservedSize: 28,
+                    getTitlesWidget: (value, meta) {
+                      final idx = value.toInt();
+                      if (idx < 0 || idx >= points.length) return const SizedBox.shrink();
+                      final shouldShow = idx == 0 || idx == points.length - 1 || idx % showEvery == 0;
+                      if (!shouldShow) return const SizedBox.shrink();
+                      return SideTitleWidget(
+                        meta: meta,
+                        child: Text(_shortLabel(points[idx].periodStart), style: theme.textTheme.labelSmall),
+                      );
+                    },
+                  ),
+                ),
+              ),
+              lineTouchData: LineTouchData(
+                enabled: true,
+                touchTooltipData: LineTouchTooltipData(
+                  fitInsideHorizontally: true,
+                  fitInsideVertically: true,
+                  maxContentWidth: 280,
+                  tooltipBorderRadius: BorderRadius.circular(12),
+                  tooltipPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  tooltipMargin: 12,
+                  getTooltipColor: (_) => const Color(0xFF111827),
+                  getTooltipItems: (spots) {
+                    final valueStyle = theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontFamily: 'monospace',
+                          height: 1.35,
+                        ) ??
+                        const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          fontFamily: 'monospace',
+                          height: 1.35,
+                        );
+
+                    final valuesByIndex = <int, double>{
+                      for (final spot in spots) spot.barIndex: spot.y,
+                    };
+
+                    return spots.asMap().entries.map((entry) {
+                      final rowIndex = entry.key;
+                      final spot = entry.value;
+                      final idx = spot.x.toInt();
+                      if (rowIndex > 0) {
+                        return null;
+                      }
+
+                      final dateHeader = '${_shortLabel(points[idx].periodStart)}\n';
+                      final spending = _metricLine('Spending', valuesByIndex[0] ?? 0);
+                      final debtPaid = _metricLine('Debt paid', valuesByIndex[1] ?? 0);
+                      final savings = _metricLine('Savings', valuesByIndex[2] ?? 0);
+
+                      return LineTooltipItem(
+                        '$dateHeader$spending\n$debtPaid\n$savings',
+                        valueStyle,
+                        textAlign: TextAlign.left,
+                      );
+                    }).toList();
+                  },
+                ),
+              ),
+              lineBarsData: [
+                _buildSeries(points: points, valueOf: (t) => t.spending, color: spendingColor),
+                _buildSeries(points: points, valueOf: (t) => t.debtPaid, color: debtColor),
+                _buildSeries(points: points, valueOf: (t) => t.savingsContributed, color: savingsColor),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          children: [
+            _legend(theme, spendingColor, 'Spending'),
+            _legend(theme, debtColor, 'Debt paid'),
+            _legend(theme, savingsColor, 'Savings'),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _legend(ThemeData theme, Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        Text(label, style: theme.textTheme.labelMedium),
       ],
     );
   }
@@ -125,6 +350,105 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
     return _closedMonths.any((d) => _sameDay(d, start));
   }
 
+  List<_PeriodTrendPoint> _periodComparisonHistory({
+    required DateTime selectedStart,
+    int maxPeriods = 10,
+  }) {
+    final allowed = _allowedPeriods(); // newest first
+    if (allowed.isEmpty) return const [];
+
+    final idx = allowed.indexWhere((d) => _sameDay(d, selectedStart));
+    final windowNewestFirst = idx == -1
+        ? allowed.take(maxPeriods).toList()
+        : allowed.skip(idx).take(maxPeriods).toList();
+
+    return windowNewestFirst
+        .map((anchor) {
+          final start = _periodStartFor(anchor);
+          return _PeriodTrendPoint(
+            periodStart: start,
+            totals: _totalsForPeriod(start),
+          );
+        })
+        .toList()
+        .reversed
+        .toList();
+  }
+
+  _PeriodComparisonTotals _totalsForPeriod(DateTime periodStart) {
+    final periodKey = DateTime(periodStart.year, periodStart.month, periodStart.day);
+    final isClosed = _isClosedPeriod(periodStart);
+
+    if (isClosed) {
+      final snapshots = _snapshotsByPeriod[periodKey] ?? const <int, models.BudgetSnapshot>{};
+      final spendingMap = _spendingByPeriod[periodKey] ?? const <int, double>{};
+      final debtCategoryIds = (_liabSnapsByPeriod[periodKey] ?? const <models.LiabilitySnapshot>[])
+          .map((s) => s.categoryId)
+          .toSet();
+      final fundCategoryIds = (_fundSnapsByPeriod[periodKey] ?? const <models.FundSnapshot>[])
+          .where((s) => s.categoryId != null)
+          .map((s) => s.categoryId!)
+          .toSet();
+
+      double spending = 0;
+      for (final s in snapshots.values) {
+        if (debtCategoryIds.contains(s.categoryId) || fundCategoryIds.contains(s.categoryId)) {
+          continue;
+        }
+        spending += spendingMap[s.categoryId] ?? 0;
+      }
+
+      final debtPaid = (_liabSnapsByPeriod[periodKey] ?? const <models.LiabilitySnapshot>[])
+          .fold<double>(0, (sum, s) => sum + s.paid);
+      final savingsContributed = (_fundSnapsByPeriod[periodKey] ?? const <models.FundSnapshot>[])
+          .fold<double>(0, (sum, s) => sum + s.contributed);
+
+      return _PeriodComparisonTotals(
+        spending: spending,
+        debtPaid: debtPaid,
+        savingsContributed: savingsContributed,
+      );
+    }
+
+    final periodEndExclusive = _periodUpperBoundExclusive(periodStart);
+    final periodLiabs = _liabilitiesForPeriod();
+    final debtCategoryIds = periodLiabs.map((l) => l.budgetCategoryId).toSet();
+    final fundCategoryIds = sinkingFunds
+        .where((f) => f.budgetCategoryId != null)
+        .map((f) => f.budgetCategoryId!)
+        .toSet();
+
+    final selection = selectActiveOverviewSelection(
+      categories: categories,
+      transactions: transactions,
+      liabilities: periodLiabs,
+      sinkingFunds: sinkingFunds,
+      periodStart: periodStart,
+      periodEndExclusive: periodEndExclusive,
+    );
+
+    final spending = selection.spentByCategory.values.fold<double>(0, (sum, v) => sum + v);
+
+    double debtPaid = 0;
+    double savingsContributed = 0;
+    for (final t in transactions) {
+      final inPeriod = !t.date.isBefore(periodStart) && t.date.isBefore(periodEndExclusive);
+      if (!inPeriod) continue;
+      if (debtCategoryIds.contains(t.categoryId)) {
+        debtPaid += t.amount;
+      }
+      if (fundCategoryIds.contains(t.categoryId) && t.amount > 0) {
+        savingsContributed += t.amount;
+      }
+    }
+
+    return _PeriodComparisonTotals(
+      spending: spending,
+      debtPaid: debtPaid,
+      savingsContributed: savingsContributed,
+    );
+  }
+
   // Upper bound (exclusive) for the selected period using actual close date for closed periods.
   DateTime _periodUpperBoundExclusive(DateTime start) {
     if (_isClosedPeriod(start)) {
@@ -181,6 +505,7 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
     final isClosed = _isClosedPeriod(ps);
     final snaps = isClosed ? _snapshotsByPeriod[DateTime(ps.year, ps.month, ps.day)] : null;
     final useSnaps = snaps != null && snaps.isNotEmpty;
+    final snapshotValues = snaps?.values ?? const <models.BudgetSnapshot>[];
 
     // Income for this period: snapshot sum for closed, else current income sources (+carry-forward for active period)
     final double periodIncome = isClosed
@@ -202,7 +527,7 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
 
     // Base category budgets (excluding debt and fund categories)
   final double baseCategoryBudget = useSnaps
-    ? snaps.values
+    ? snapshotValues
             .where((x) => !debtCatIds.contains(x.categoryId) && !fundCatIds.contains(x.categoryId))
             .fold<double>(0, (s, x) => s + x.budgetLimit)
         : categories
@@ -269,7 +594,7 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
 
     // Build breakdown list for chart
   final breakdownList = useSnaps
-    ? snaps.values
+    ? snapshotValues
             .map((s) => CategoryBreakdown(
                   name: s.categoryName,
                   spent: 0,
@@ -289,54 +614,48 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
     // Spending by category for the selected period (exclude debt and funds categories)
     final start = _periodStartFor(selectedMonth);
     final end = _periodUpperBoundExclusive(start);
-    final spendingList = (useSnaps
-            ? snaps.values
-                .where((x) => !debtCatIds.contains(x.categoryId) && !fundCatIds.contains(x.categoryId))
-                .map((s) => CategoryBreakdown(
-                      name: s.categoryName,
-                      spent: (_spendingByPeriod[DateTime(ps.year, ps.month, ps.day)] ?? const {})[s.categoryId] ?? 0.0,
-                      limit: s.budgetLimit,
-                      categoryId: s.categoryId,
-                    ))
-                .toList()
-            : categories
-                .where((c) => c.id != null && !debtCatIds.contains(c.id!) && !fundCatIds.contains(c.id!))
-                .map((c) => CategoryBreakdown(
-                      name: c.name,
-                      spent: 0,
-                      limit: c.budgetLimit,
-                      categoryId: c.id,
-                    ))
-                .toList())
-        .map((cb) {
-      if (isClosed) {
-        return CategoryBreakdown(
-          name: cb.name,
-          spent: cb.spent,
-          limit: cb.limit,
-          categoryId: cb.categoryId,
-        );
-      }
-      double spent = 0;
-      for (final t in transactions) {
-        if (t.categoryId == cb.categoryId && !t.date.isBefore(start) && t.date.isBefore(end)) {
-          if (t.amount > 0) spent += t.amount;
-        }
-      }
-      return CategoryBreakdown(
-        name: cb.name,
-        spent: spent,
-        limit: cb.limit,
-        categoryId: cb.categoryId,
-      );
-    }).toList()
+    final spendingList = isClosed
+      ? snapshotValues
+            .where((x) => !debtCatIds.contains(x.categoryId) && !fundCatIds.contains(x.categoryId))
+            .map((s) => CategoryBreakdown(
+                  name: s.categoryName,
+                  spent: (_spendingByPeriod[DateTime(ps.year, ps.month, ps.day)] ?? const {})[s.categoryId] ?? 0.0,
+                  limit: s.budgetLimit,
+                  categoryId: s.categoryId,
+                ))
+            .toList()
+        : (() {
+            final selection = selectActiveOverviewSelection(
+              categories: categories,
+              transactions: transactions,
+              liabilities: periodLiabs,
+              sinkingFunds: sinkingFunds,
+              periodStart: start,
+              periodEndExclusive: end,
+            );
+
+            return selection.categories
+                .map(
+                  (c) => CategoryBreakdown(
+                    name: c.name,
+                    spent: selection.spentByCategory[c.id!] ?? 0.0,
+                    limit: c.budgetLimit,
+                    categoryId: c.id,
+                  ),
+                )
+                .toList();
+          })()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
-    final overviewPlanned = spendingList.fold<double>(0.0, (s, c) => s + c.limit);
-    final overviewSpent = spendingList.fold<double>(0.0, (s, c) => s + c.spent);
-    final overviewRemaining = (overviewPlanned - overviewSpent).clamp(0.0, double.infinity);
-    final isOverBudget = overviewSpent > overviewPlanned && overviewPlanned > 0;
-    final progress = overviewPlanned > 0 ? (overviewSpent / overviewPlanned).clamp(0.0, 1.0) : 0.0;
+    final overviewMetrics = calculateOverviewMetrics(
+      spendingList.map(
+        (c) => OverviewMetricItem(
+          planned: c.limit,
+          spent: c.spent,
+        ),
+      ),
+    );
+    final comparisonHistory = _periodComparisonHistory(selectedStart: ps, maxPeriods: 10);
 
     return Scaffold(
       appBar: AppBar(
@@ -381,15 +700,23 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                 case 'notif_enable':
                   await NotificationService.instance.init();
                   final ok = await NotificationService.instance.requestPermissions();
-                  if (!ok && mounted) {
+                  if (!context.mounted) return;
+                  if (!ok) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: const Text('Permission denied. Open system settings to enable notifications.'),
                         action: SnackBarAction(label: 'Open', onPressed: () => NotificationService.instance.openSystemSettings()),
                       ),
                     );
-                  } else if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications enabled.')));
+                  } else {
+                    await AlertsService.setEnabled(true);
+                    await AlertsService.checkAndNotify();
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Notifications enabled. You will be reminded about pending spending, debt, or savings actions.'),
+                      ),
+                    );
                   }
                   break;
                 case 'edit_budget':
@@ -410,7 +737,7 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
         ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: kCompactPagePadding,
         child: Scrollbar(
           controller: _reportScroll,
           thumbVisibility: true,
@@ -451,11 +778,11 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                   const SizedBox(height: 8),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: kCompactSectionGap),
 
               // Overview dashboard (mirrors Budget screen style)
               Card(
-                elevation: 4,
+                elevation: 2,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 child: Container(
                   width: double.infinity,
@@ -463,14 +790,14 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                     borderRadius: BorderRadius.circular(16),
                     gradient: LinearGradient(
                       colors: [
-                        Theme.of(context).colorScheme.primaryContainer.withOpacity(0.7),
+                        Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.7),
                         Theme.of(context).colorScheme.surface,
                       ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
                   ),
-                  padding: const EdgeInsets.all(16.0),
+                  padding: const EdgeInsets.all(12.0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -496,13 +823,13 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
-                              color: isOverBudget
+                              color: overviewMetrics.isOverBudget
                                   ? Theme.of(context).colorScheme.error
                                   : Theme.of(context).colorScheme.primary,
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
-                              isOverBudget ? 'Over Budget' : 'On Track',
+                              overviewMetrics.isOverBudget ? 'Over Budget' : 'On Track',
                               style: Theme.of(context).textTheme.labelMedium?.copyWith(
                                 color: Theme.of(context).colorScheme.onPrimary,
                                 fontWeight: FontWeight.bold,
@@ -511,36 +838,36 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
                           _OverviewStat(
                             title: 'Planned',
-                            amount: overviewPlanned,
+                            amount: overviewMetrics.planned,
                             color: Theme.of(context).colorScheme.primary,
                           ),
                           _OverviewStat(
                             title: 'Spent',
-                            amount: overviewSpent,
+                            amount: overviewMetrics.spent,
                             color: Theme.of(context).colorScheme.error,
                           ),
                           _OverviewStat(
                             title: 'Remaining',
-                            amount: overviewRemaining,
+                            amount: overviewMetrics.remaining,
                             color: Theme.of(context).colorScheme.tertiary,
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
                         child: LinearProgressIndicator(
-                          value: progress,
+                          value: overviewMetrics.progress,
                           minHeight: 10,
                           backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                           valueColor: AlwaysStoppedAnimation<Color>(
-                            isOverBudget
+                            overviewMetrics.isOverBudget
                                 ? Theme.of(context).colorScheme.error
                                 : Theme.of(context).colorScheme.primary,
                           ),
@@ -551,24 +878,9 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                 ),
               ),
 
-              const SizedBox(height: 10),
+              const SizedBox(height: kCompactSectionGap),
 
-              // Allocation chart
-              Text('Budget Allocation', style: Theme.of(context).textTheme.titleMedium),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: BudgetAllocationChart(
-                    breakdown: breakdownList,
-                    unallocatedAmount: unallocated > 0 ? unallocated : 0.0,
-                    onSliceTap: (data) => _showCategoryDetails(context, data),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Spending by Category (restored)
+              // Spending by Category
               if (spendingList.isEmpty)
                 const Center(child: Text('No categories available. Add a category to view reports.'))
               else ...[
@@ -581,19 +893,21 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                   itemBuilder: (context, index) {
                     final cat = spendingList[index];
                     final remaining = cat.limit - cat.spent;
-                    return Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12.0),
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Row(children: [
-                            Expanded(
-                              child: Text(cat.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                            ),
-                            Text(
-                              '₹${cat.spent.toStringAsFixed(0)} / ₹${cat.limit.toStringAsFixed(0)}',
-                              style: const TextStyle(fontSize: 12, color: Colors.grey),
-                            ),
-                          ]),
+                    return CompactSectionCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(cat.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                              ),
+                              Text(
+                                '₹${cat.spent.toStringAsFixed(0)} / ₹${cat.limit.toStringAsFixed(0)}',
+                                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                              ),
+                            ],
+                          ),
                           const SizedBox(height: 8),
                           ThermometerBar(
                             value: cat.spent,
@@ -614,14 +928,13 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                               ),
                             ],
                           ),
-                        ]),
+                        ],
                       ),
                     );
                   },
                 ),
+                const SizedBox(height: 12),
               ],
-
-              const SizedBox(height: 16),
 
               // Savings contributions
               if (sinkingFunds.isNotEmpty) ...[
@@ -638,35 +951,46 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                     final progress = fund.targetAmount <= 0
                         ? 0.0
                         : (fund.balance / fund.targetAmount).clamp(0.0, 1.0);
-                    return Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12.0),
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Row(children: [
-                            Expanded(child: Text(fund.name, style: const TextStyle(fontWeight: FontWeight.bold))),
-                            const SizedBox(width: 8),
-                            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                              const Text('Δ vs Plan', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                              Text('₹${delta.toStringAsFixed(2)}',
-                                  style: TextStyle(
+                    return CompactSectionCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(child: Text(fund.name, style: const TextStyle(fontWeight: FontWeight.bold))),
+                              const SizedBox(width: 8),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  const Text('Δ vs Plan', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                  Text(
+                                    '₹${delta.toStringAsFixed(2)}',
+                                    style: TextStyle(
                                       color: delta >= 0 ? Colors.green : Colors.red,
-                                      fontWeight: FontWeight.bold)),
-                            ]),
-                          ]),
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                           const SizedBox(height: 6),
                           Text(
-                              'Monthly: ₹${fund.monthlyContribution.toStringAsFixed(2)} | Contributed: ₹${contributed.toStringAsFixed(2)}'),
+                            'Monthly: ₹${fund.monthlyContribution.toStringAsFixed(2)} | Contributed: ₹${contributed.toStringAsFixed(2)}',
+                          ),
                           const SizedBox(height: 6),
-                          Text('Progress: ₹${fund.balance.toStringAsFixed(2)} / ₹${fund.targetAmount.toStringAsFixed(2)}',
-                              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          Text(
+                            'Progress: ₹${fund.balance.toStringAsFixed(2)} / ₹${fund.targetAmount.toStringAsFixed(2)}',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
                           const SizedBox(height: 6),
                           LinearProgressIndicator(value: progress),
-                        ]),
+                        ],
                       ),
                     );
                   },
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
               ],
 
               // Debt payments
@@ -683,7 +1007,7 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                       final liab = periodLiabilities[index];
                       final paid = _paidThisMonthFor(liab);
                       final delta = paid - liab.planned;
-                      return Card(
+                      return CompactItemCard(
                         child: ListTile(
                           title: Text(liab.name),
                           subtitle: Text('Min: ₹${liab.planned.toStringAsFixed(2)} | Paid: ₹${paid.toStringAsFixed(2)}'),
@@ -700,6 +1024,38 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
                   ),
                 ]);
               }),
+
+              const SizedBox(height: kCompactSectionGap),
+
+              // Budget allocation
+              Text('Budget Allocation', style: Theme.of(context).textTheme.titleMedium),
+              CompactSectionCard(
+                child: BudgetAllocationChart(
+                  breakdown: breakdownList,
+                  unallocatedAmount: unallocated > 0 ? unallocated : 0.0,
+                  onSliceTap: (data) => _showCategoryDetails(context, data),
+                ),
+              ),
+
+              const SizedBox(height: kCompactSectionGap),
+
+              // Period comparison
+              CompactSectionCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Period Comparison',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    if (comparisonHistory.length < 2)
+                      const Text('Close more periods to unlock historical line trends.')
+                    else
+                      _PeriodComparisonLineChart(points: comparisonHistory),
+                  ],
+                ),
+              ),
             ]),
           ),
         ),
@@ -709,11 +1065,6 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
 
   Future<void> _loadData() async {
     try {
-      final cats = await RMinderDatabase.instance.getCategories();
-      final txns = await RMinderDatabase.instance.getTransactions();
-      final liabs = await RMinderDatabase.instance.getAllLiabilities(); // load all including archived
-      final funds = await RMinderDatabase.instance.getSinkingFunds();
-      final incomes = await RMinderDatabase.instance.getIncomeSources();
       final closed = await RMinderDatabase.instance.getClosedMonths();
       final closedWith = await RMinderDatabase.instance.getClosedMonthsWithClosedAt();
       // Preload snapshots for all closed periods
@@ -858,6 +1209,8 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
       amtCtrls[s.categoryId] = TextEditingController(text: s.budgetLimit.toStringAsFixed(2));
     }
 
+    if (!mounted) return;
+
     bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -924,17 +1277,15 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
       await RMinderDatabase.instance.saveBudgetSnapshotForPeriod(periodStart, editedCats);
       // Reload snapshots for this period and update cache
       final updated = await RMinderDatabase.instance.getBudgetSnapshotMapFor(periodStart);
+      if (!mounted) return;
       setState(() {
         _snapshotsByPeriod[DateTime(periodStart.year, periodStart.month, periodStart.day)] = updated;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved period budget.')));
-      }
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved period budget.')));
     } catch (e, st) {
       logError(e, st);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to save budget for period.')));
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to save budget for period.')));
     }
   }
 
@@ -963,6 +1314,8 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
       final amt = ((r['amount'] ?? 0) as num).toDouble();
       amtCtrls.add(TextEditingController(text: amt.toStringAsFixed(2)));
     }
+
+    if (!mounted) return;
 
     // Add-row logic is handled inline in the setLocal() call below.
 
@@ -1060,18 +1413,16 @@ double _activeCarryIncome = 0.0; // One-time carry-forward income for active per
       await RMinderDatabase.instance.saveIncomeSnapshotForPeriod(periodStart, edits);
       // Update local sum cache and refresh UI
       final sum = edits.fold<double>(0, (s, e) => s + e.amount);
+      if (!mounted) return;
       setState(() {
         _incomeSumByPeriod[DateTime(periodStart.year, periodStart.month, periodStart.day)] = sum;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved period income.')));
-      }
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved period income.')));
     } catch (e, st) {
       logError(e, st);
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Failed to save income for period.')));
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Failed to save income for period.')));
     }
   }
 

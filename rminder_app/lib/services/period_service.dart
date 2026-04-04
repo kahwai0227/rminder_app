@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../db/rminder_database.dart';
 import '../models/models.dart' as models;
+import '../utils/mutation_error_message.dart';
 import 'navigation_service.dart';
 
 enum PeriodCloseAction { none, carryIncome, payDebt, contributeFund }
@@ -60,7 +61,7 @@ class PeriodService {
       // Active (non-archived) liabilities only for minimum payment requirement.
       final activeLiabilities = liabilities.where((l) => !l.isArchived).toList();
 
-      double _paidThisMonthFor(models.Liability liab) {
+      double paidThisMonthFor(models.Liability liab) {
         double total = 0;
         final start = periodStart;
         final today = DateTime.now();
@@ -76,7 +77,7 @@ class PeriodService {
       // Check minimum payments.
       final List<Map<String, dynamic>> minShortfalls = [];
       for (final liab in activeLiabilities) {
-        final paid = _paidThisMonthFor(liab);
+        final paid = paidThisMonthFor(liab);
         final remaining = liab.planned - paid;
         if (remaining > 0.01) {
           minShortfalls.add({'name': liab.name, 'remaining': remaining});
@@ -146,52 +147,60 @@ class PeriodService {
                     const SizedBox(height: 8),
                     Text('Unspent: ₹${totalLeftover.toStringAsFixed(2)}'),
                     const SizedBox(height: 12),
-                RadioListTile<PeriodCloseAction>(
-                  value: PeriodCloseAction.none,
-                  groupValue: mode,
-                  onChanged: (v) => setLocal(() => mode = v ?? mode),
-                  title: const Text('Close only'),
-                ),
-                RadioListTile<PeriodCloseAction>(
-                  value: PeriodCloseAction.carryIncome,
-                  groupValue: mode,
-                  onChanged: totalLeftover <= 0 ? null : (v) => setLocal(() => mode = v ?? mode),
-                  title: const Text('Carry as income'),
-                ),
-                RadioListTile<PeriodCloseAction>(
-                  value: PeriodCloseAction.payDebt,
-                  groupValue: mode,
-                  onChanged: (activeLiabilities.isEmpty || totalLeftover <= 0) ? null : (v) => setLocal(() => mode = v ?? mode),
-                  title: const Text('Pay debt'),
-                  subtitle: activeLiabilities.isEmpty
-                      ? null
-                      : DropdownButton<models.Liability>(
-                          value: selectedLiab,
-                          isExpanded: true,
-                          items: [
-                            for (final l in activeLiabilities)
-                              DropdownMenuItem(value: l, child: Text(l.name)),
-                          ],
-                          onChanged: (v) => setLocal(() => selectedLiab = v),
-                        ),
-                ),
-                RadioListTile<PeriodCloseAction>(
-                  value: PeriodCloseAction.contributeFund,
-                  groupValue: mode,
-                  onChanged: (fundChoices.isEmpty || totalLeftover <= 0) ? null : (v) => setLocal(() => mode = v ?? mode),
-                  title: const Text('Contribute to fund'),
-                  subtitle: fundChoices.isEmpty
-                      ? null
-                      : DropdownButton<models.SinkingFund>(
-                          value: selectedFund,
-                          isExpanded: true,
-                          items: [
-                            for (final f in fundChoices)
-                              DropdownMenuItem(value: f, child: Text(f.name)),
-                          ],
-                          onChanged: (v) => setLocal(() => selectedFund = v),
-                        ),
-                ),
+                    RadioGroup<PeriodCloseAction>(
+                      groupValue: mode,
+                      onChanged: (v) {
+                        if (v != null) {
+                          setLocal(() => mode = v);
+                        }
+                      },
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const RadioListTile<PeriodCloseAction>(
+                            value: PeriodCloseAction.none,
+                            title: Text('Close only'),
+                          ),
+                          RadioListTile<PeriodCloseAction>(
+                            value: PeriodCloseAction.carryIncome,
+                            enabled: totalLeftover > 0,
+                            title: const Text('Carry as income'),
+                          ),
+                          RadioListTile<PeriodCloseAction>(
+                            value: PeriodCloseAction.payDebt,
+                            enabled: activeLiabilities.isNotEmpty && totalLeftover > 0,
+                            title: const Text('Pay debt'),
+                            subtitle: activeLiabilities.isEmpty
+                                ? null
+                                : DropdownButton<models.Liability>(
+                                    value: selectedLiab,
+                                    isExpanded: true,
+                                    items: [
+                                      for (final l in activeLiabilities)
+                                        DropdownMenuItem(value: l, child: Text(l.name)),
+                                    ],
+                                    onChanged: (v) => setLocal(() => selectedLiab = v),
+                                  ),
+                          ),
+                          RadioListTile<PeriodCloseAction>(
+                            value: PeriodCloseAction.contributeFund,
+                            enabled: fundChoices.isNotEmpty && totalLeftover > 0,
+                            title: const Text('Contribute to fund'),
+                            subtitle: fundChoices.isEmpty
+                                ? null
+                                : DropdownButton<models.SinkingFund>(
+                                    value: selectedFund,
+                                    isExpanded: true,
+                                    items: [
+                                      for (final f in fundChoices)
+                                        DropdownMenuItem(value: f, child: Text(f.name)),
+                                    ],
+                                    onChanged: (v) => setLocal(() => selectedFund = v),
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ),
               ],
                 ),
               ),
@@ -205,79 +214,49 @@ class PeriodService {
       );
       if (confirmed != true) return;
 
-      // Snapshot budgets + income for historical reporting.
-      await RMinderDatabase.instance.saveBudgetSnapshotForPeriod(periodStart, categories);
-      await RMinderDatabase.instance.saveIncomeSnapshotForPeriod(periodStart, incomeSources);
-
       // Determine closed period end using the actual close timestamp (with time)
-      final _closeAt = DateTime.now();
-      final _endExclusive = _closeAt.add(const Duration(microseconds: 1));
+      final closeAt = DateTime.now();
+      final endExclusive = closeAt.add(const Duration(microseconds: 1));
 
       // Snapshot spending per category (positive expenses only) for the closed period
-      final Map<int, double> _spentAllCats = {};
+      final Map<int, double> spentAllCats = {};
       for (final t in transactions) {
-        if (!t.date.isBefore(periodStart) && t.date.isBefore(_endExclusive) && t.amount > 0) {
-          _spentAllCats.update(t.categoryId, (v) => v + t.amount, ifAbsent: () => t.amount);
+        if (!t.date.isBefore(periodStart) && t.date.isBefore(endExclusive) && t.amount > 0) {
+          spentAllCats.update(t.categoryId, (v) => v + t.amount, ifAbsent: () => t.amount);
         }
       }
-      await RMinderDatabase.instance.saveSpendingSnapshotForPeriod(periodStart, categories, _spentAllCats);
-
       // Snapshot liabilities: planned vs paid (payments are positive amounts against liability category)
-      final Map<int, double> _paidByLiabilityId = {};
+      final Map<int, double> paidByLiabilityId = {};
       for (final l in liabilities) {
         if (l.id == null) continue;
         double paid = 0;
         for (final t in transactions) {
-          if (t.categoryId == l.budgetCategoryId && !t.date.isBefore(periodStart) && t.date.isBefore(_endExclusive) && t.amount > 0) {
+          if (t.categoryId == l.budgetCategoryId && !t.date.isBefore(periodStart) && t.date.isBefore(endExclusive) && t.amount > 0) {
             paid += t.amount;
           }
         }
-        _paidByLiabilityId[l.id!] = paid;
+        paidByLiabilityId[l.id!] = paid;
       }
-      await RMinderDatabase.instance.saveLiabilitySnapshotForPeriod(periodStart, liabilities, _paidByLiabilityId);
-
       // Snapshot funds: planned monthly vs contributed (contributions are positive amounts against fund category)
-      final Map<int, double> _contribByFundId = {};
+      final Map<int, double> contribByFundId = {};
       for (final f in sinkingFunds) {
         if (f.id == null || f.budgetCategoryId == null) continue;
         double contributed = 0;
         for (final t in transactions) {
-          if (t.categoryId == f.budgetCategoryId && !t.date.isBefore(periodStart) && t.date.isBefore(_endExclusive) && t.amount > 0) {
+          if (t.categoryId == f.budgetCategoryId && !t.date.isBefore(periodStart) && t.date.isBefore(endExclusive) && t.amount > 0) {
             contributed += t.amount;
           }
         }
-        _contribByFundId[f.id!] = contributed;
+        contribByFundId[f.id!] = contributed;
       }
-      await RMinderDatabase.instance.saveFundSnapshotForPeriod(periodStart, sinkingFunds, _contribByFundId);
+      final nextStart = closeAt; // new period begins at the exact close timestamp
 
-      // Auto-archive liabilities paid off.
-      for (final liab in activeLiabilities) {
-        if (liab.balance <= 0 && !liab.isArchived) {
-          await RMinderDatabase.instance.updateLiability(models.Liability(
-            id: liab.id,
-            name: liab.name,
-            balance: liab.balance,
-            planned: liab.planned,
-            budgetCategoryId: liab.budgetCategoryId,
-            isArchived: true,
-          ));
-        }
-      }
-
-      final nextStart = _closeAt; // new period begins at the exact close timestamp
+      String action = 'closeOnly';
+      int? transferCategoryId;
+      String? transferNote;
 
       if (mode == PeriodCloseAction.carryIncome) {
-        // Record one-time carry income for next period via Settings
-        final y = nextStart.year.toString().padLeft(4, '0');
-        final m = nextStart.month.toString().padLeft(2, '0');
-        final d = nextStart.day.toString().padLeft(2, '0');
-        final key = 'carry_income:$y-$m-$d';
-        await RMinderDatabase.instance.setSetting(key, totalLeftover.toStringAsFixed(2));
-        await RMinderDatabase.instance.insertClosedMonth(
-          monthStart: periodStart,
-          action: 'carryIncome',
-          closedAt: _closeAt,
-        );
+        action = 'carryIncome';
       } else if (mode == PeriodCloseAction.payDebt) {
         final liab = selectedLiab;
         if (liab == null) {
@@ -286,17 +265,9 @@ class PeriodService {
           }
           return;
         }
-        await RMinderDatabase.instance.insertTransaction(models.Transaction(
-          categoryId: liab.budgetCategoryId,
-            amount: totalLeftover,
-            date: _closeAt,
-            note: 'Period close payment (${_monthName(periodStart.month)} ${periodStart.year}) - ${liab.name}',
-        ));
-        await RMinderDatabase.instance.insertClosedMonth(
-          monthStart: periodStart,
-          action: 'payDebt',
-          closedAt: _closeAt,
-        );
+        action = 'payDebt';
+        transferCategoryId = liab.budgetCategoryId;
+        transferNote = 'Period close payment (${_monthName(periodStart.month)} ${periodStart.year}) - ${liab.name}';
       } else if (mode == PeriodCloseAction.contributeFund) {
         final fund = selectedFund;
         if (fund == null || fund.budgetCategoryId == null) {
@@ -305,27 +276,27 @@ class PeriodService {
           }
           return;
         }
-        await RMinderDatabase.instance.insertTransaction(models.Transaction(
-          categoryId: fund.budgetCategoryId!,
-          amount: totalLeftover,
-          date: _closeAt,
-          note: 'Period close contribution (${_monthName(periodStart.month)} ${periodStart.year}) - ${fund.name}',
-        ));
-        await RMinderDatabase.instance.insertClosedMonth(
-          monthStart: periodStart,
-          action: 'contributeFund',
-          closedAt: _closeAt,
-        );
-      } else {
-        // Close only
-        await RMinderDatabase.instance.insertClosedMonth(
-          monthStart: periodStart,
-          action: 'closeOnly',
-          closedAt: _closeAt,
-        );
+        action = 'contributeFund';
+        transferCategoryId = fund.budgetCategoryId!;
+        transferNote = 'Period close contribution (${_monthName(periodStart.month)} ${periodStart.year}) - ${fund.name}';
       }
 
-      await RMinderDatabase.instance.setActivePeriodStart(nextStart);
+      await RMinderDatabase.instance.closePeriodAtomic(
+        periodStart: periodStart,
+        closeAt: closeAt,
+        nextStart: nextStart,
+        action: action,
+        totalLeftover: totalLeftover,
+        transferCategoryId: transferCategoryId,
+        transferNote: transferNote,
+        categories: categories,
+        incomeSources: incomeSources,
+        liabilities: liabilities,
+        sinkingFunds: sinkingFunds,
+        spentByCategory: spentAllCats,
+        paidByLiabilityId: paidByLiabilityId,
+        contributedByFundId: contribByFundId,
+      );
 
       if (ctx.mounted) {
         ScaffoldMessenger.of(ctx).showSnackBar(
@@ -336,8 +307,9 @@ class PeriodService {
       // Log & surface failure.
       debugPrint('Failed to close period: $e\n$st');
       final ctx = NavigationService.instance.navigatorKey.currentContext ?? context;
+      final userMessage = mutationFailureMessage(e, fallback: 'Failed to close period. Please try again.');
       if (ctx.mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Failed to close period. Please try again.')));
+        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(userMessage)));
       }
     }
   }

@@ -6,11 +6,11 @@ class BudgetCategoryExpansionPanel extends StatefulWidget {
   final Function(models.BudgetCategory) onEdit;
   final Function(models.BudgetCategory) onDelete;
   const BudgetCategoryExpansionPanel({
+    super.key,
     required this.categories,
     required this.onEdit,
     required this.onDelete,
-    Key? key,
-  }) : super(key: key);
+  });
 
   @override
   State<BudgetCategoryExpansionPanel> createState() => _BudgetCategoryExpansionPanelState();

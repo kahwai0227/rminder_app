@@ -2,6 +2,16 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+class NotificationServiceException implements Exception {
+  final String userMessage;
+  final Object? cause;
+
+  NotificationServiceException(this.userMessage, {this.cause});
+
+  @override
+  String toString() => cause == null ? userMessage : '$userMessage ($cause)';
+}
+
 class NotificationService {
   NotificationService._();
   static final NotificationService instance = NotificationService._();
@@ -83,7 +93,7 @@ class NotificationService {
       debugPrint('[NotificationService] show() dispatched');
     } catch (e) {
       debugPrint('[NotificationService] show() error: $e');
-      rethrow;
+      throw NotificationServiceException('Unable to show notification right now.', cause: e);
     }
   }
 
@@ -100,13 +110,18 @@ class NotificationService {
     const iosDetails = DarwinNotificationDetails();
     const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
 
-    await _plugin.periodicallyShow(
-      id,
-      title,
-      body,
-      RepeatInterval.daily,
-      details,
-      androidAllowWhileIdle: true,
-    );
+    try {
+      await _plugin.periodicallyShow(
+        id,
+        title,
+        body,
+        RepeatInterval.daily,
+        details,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      );
+    } catch (e) {
+      debugPrint('[NotificationService] scheduleDailyReminder() error: $e');
+      throw NotificationServiceException('Unable to schedule daily reminder.', cause: e);
+    }
   }
 }

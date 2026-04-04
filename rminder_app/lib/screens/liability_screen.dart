@@ -6,11 +6,13 @@ import '../models/models.dart' as models;
 import '../utils/logger.dart';
 import '../utils/ui_intents.dart';
 import '../utils/currency_input_formatter.dart';
+import '../utils/mutation_guard.dart';
+import '../widgets/compact_cards.dart';
 import '../main.dart' show buildGlobalAppBarActions;
 import '../main.dart' as app;
 
 class LiabilitiesPage extends StatefulWidget {
-  const LiabilitiesPage({Key? key}) : super(key: key);
+  const LiabilitiesPage({super.key});
   @override
   State<LiabilitiesPage> createState() => _LiabilitiesPageState();
 }
@@ -61,25 +63,8 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
 
   Future<void> _loadLiabilities() async {
     try {
-      final list = await RMinderDatabase.instance.getLiabilities();
-      // removed
-      // removed
+      await Provider.of<AppState>(context, listen: false).loadAllData();
       _maybeOpenEditFromIntent();
-    } catch (e, st) {
-      logError(e, st);
-    }
-  }
-
-  Future<void> _loadPaidThisMonth() async {
-    try {
-      final now = DateTime.now();
-      final Map<int, double> map = {};
-      for (final liab in []) {
-        if (liab.id == null) continue;
-        final paid = await RMinderDatabase.instance.sumPaidForLiabilityInMonth(liab.id!, now);
-        map[liab.id!] = paid;
-      }
-      // removed
     } catch (e, st) {
       logError(e, st);
     }
@@ -119,7 +104,7 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               final name = nameController.text.trim();
               final balance = double.tryParse(balanceController.text.trim().replaceAll(',', '')) ?? 0;
               final planned = double.tryParse(plannedController.text.trim().replaceAll(',', '')) ?? 0;
@@ -127,35 +112,40 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter valid values.')));
                 return;
               }
-              () async {
-                if (index == null) {
-                  final catId = await RMinderDatabase.instance.ensureDebtCategory(name, planned: planned);
-                  await RMinderDatabase.instance.insertLiability(
-                    models.Liability(name: name, balance: balance, planned: planned, budgetCategoryId: catId),
-                  );
-                } else {
-                  final liab = liabilitiesList[index];
-                  int catId = liab.budgetCategoryId;
-                  // Ensure category exists if missing (legacy)
-                  if (catId <= 0) {
-                    catId = await RMinderDatabase.instance.ensureDebtCategory(name, planned: planned);
+              await runGuardedMutation(
+                context: context,
+                failureMessage: index == null ? 'Failed to add liability.' : 'Failed to update liability.',
+                action: () async {
+                  if (index == null) {
+                    final catId = await RMinderDatabase.instance.ensureDebtCategory(name, planned: planned);
+                    await RMinderDatabase.instance.insertLiability(
+                      models.Liability(name: name, balance: balance, planned: planned, budgetCategoryId: catId),
+                    );
+                  } else {
+                    final liab = liabilitiesList[index];
+                    int catId = liab.budgetCategoryId;
+                    // Ensure category exists if missing (legacy)
+                    if (catId <= 0) {
+                      catId = await RMinderDatabase.instance.ensureDebtCategory(name, planned: planned);
+                    }
+                    await RMinderDatabase.instance.updateLiability(
+                      models.Liability(
+                        id: liab.id,
+                        name: name,
+                        balance: balance,
+                        planned: planned,
+                        budgetCategoryId: catId,
+                      ),
+                    );
                   }
-                  await RMinderDatabase.instance.updateLiability(
-                    models.Liability(
-                      id: liab.id,
-                      name: name,
-                      balance: balance,
-                      planned: planned,
-                      budgetCategoryId: catId,
-                    ),
-                  );
-                }
-                await _loadLiabilities();
-                // Keep widget categories in sync with changes/renames
-                await app.syncWidgetCategories();
-                UiIntents.categoriesChangedEvent.value++;
-                if (mounted) Navigator.of(context).pop();
-              }();
+                  await _loadLiabilities();
+                  await app.syncWidgetCategories();
+                  UiIntents.categoriesChangedEvent.value++;
+                },
+                onSuccess: () async {
+                  if (context.mounted) Navigator.of(context).pop();
+                },
+              );
             },
             child: Text(index == null ? 'Add' : 'Save'),
           ),
@@ -164,9 +154,9 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
     );
   }
 
-  void _removeLiability(List<models.Liability> liabilitiesList, int index) {
+  Future<void> _removeLiability(List<models.Liability> liabilitiesList, int index) async {
     final liab = liabilitiesList[index];
-    showDialog<bool>(
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Liability'),
@@ -182,37 +172,43 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
           ),
         ],
       ),
-    ).then((confirmed) async {
-      if (confirmed == true) {
+    );
+    if (confirmed != true || !mounted) return;
+
+    await runGuardedMutation(
+      context: context,
+      failureMessage: 'Failed to delete liability.',
+      action: () async {
         await RMinderDatabase.instance.deleteLiabilityCascade(liab.id!);
-  await _loadLiabilities();
-  await app.syncWidgetCategories();
-  UiIntents.categoriesChangedEvent.value++;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Liability "${liab.name}" and related data deleted.')),
-          );
-        }
-      }
-    });
+        await _loadLiabilities();
+        await app.syncWidgetCategories();
+        UiIntents.categoriesChangedEvent.value++;
+      },
+      onSuccess: () async {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Liability "${liab.name}" and related data deleted.')),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
     final liabilitiesList = appState.liabilities;
-    final _paidThisMonth = appState.paidLiabilitiesThisMonth;
+    final paidThisMonth = appState.paidLiabilitiesThisMonth;
     return Scaffold(
   appBar: AppBar(title: const Text('Liabilities'), actions: buildGlobalAppBarActions(context)),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: kCompactPagePadding,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           ElevatedButton.icon(
             icon: const Icon(Icons.add),
             label: const Text('Add Liability'),
             onPressed: () => _addOrEditLiability(liabilitiesList),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: kCompactSectionGap),
           Expanded(
             child: liabilitiesList.isEmpty
                 ? const Center(child: Text('No liabilities added yet.'))
@@ -224,7 +220,7 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
                       itemCount: liabilitiesList.length,
                       itemBuilder: (context, index) {
                         final liab = liabilitiesList[index];
-                        return Card(
+                        return CompactItemCard(
                           child: ListTile(
                             title: Text(liab.name),
                             subtitle: Text('Balance: ₹${liab.balance.toStringAsFixed(2)} | Min: ₹${liab.planned.toStringAsFixed(2)}'),
@@ -233,7 +229,7 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
                                 tooltip: 'Make payment',
                                 icon: const Icon(Icons.payment),
                                 onPressed: () async {
-                                  final paid = _paidThisMonth[liab.id!] ?? 0.0;
+                                  final paid = paidThisMonth[liab.id!] ?? 0.0;
                                   final remaining = (liab.planned - paid).clamp(0, double.infinity);
                                   if (remaining > 0) {
                                     final controller = TextEditingController(text: remaining.toStringAsFixed(2));
@@ -264,20 +260,27 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
                                                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid amount.')));
                                                 return;
                                               }
-                                              final txId = await RMinderDatabase.instance.payLiability(liab, amt);
-                                              final afterPaid = paid + amt;
-                                              final extra = afterPaid > liab.planned ? (afterPaid - liab.planned) : 0.0;
-                                              if (extra > 0) {
-                                                await RMinderDatabase.instance.insertExtraPayment(
-                                                  liabilityId: liab.id!,
-                                                  amount: extra,
-                                                  date: DateTime.now(),
-                                                  transactionId: txId,
-                                                );
-                                              }
-                                              await _loadLiabilities();
-                                              // removed
-                                              if (mounted) Navigator.pop(context);
+                                              await runGuardedMutation(
+                                                context: context,
+                                                failureMessage: 'Failed to record payment.',
+                                                action: () async {
+                                                  final txId = await RMinderDatabase.instance.payLiability(liab, amt);
+                                                  final afterPaid = paid + amt;
+                                                  final extra = afterPaid > liab.planned ? (afterPaid - liab.planned) : 0.0;
+                                                  if (extra > 0) {
+                                                    await RMinderDatabase.instance.insertExtraPayment(
+                                                      liabilityId: liab.id!,
+                                                      amount: extra,
+                                                      date: DateTime.now(),
+                                                      transactionId: txId,
+                                                    );
+                                                  }
+                                                  await _loadLiabilities();
+                                                },
+                                                onSuccess: () async {
+                                                  if (context.mounted) Navigator.pop(context);
+                                                },
+                                              );
                                             },
                                             child: const Text('Confirm'),
                                           ),
@@ -305,16 +308,23 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
                                                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid amount.')));
                                                 return;
                                               }
-                                              final txId = await RMinderDatabase.instance.payLiability(liab, extra);
-                                              await RMinderDatabase.instance.insertExtraPayment(
-                                                liabilityId: liab.id!,
-                                                amount: extra,
-                                                date: DateTime.now(),
-                                                transactionId: txId,
+                                              await runGuardedMutation(
+                                                context: context,
+                                                failureMessage: 'Failed to record extra payment.',
+                                                action: () async {
+                                                  final txId = await RMinderDatabase.instance.payLiability(liab, extra);
+                                                  await RMinderDatabase.instance.insertExtraPayment(
+                                                    liabilityId: liab.id!,
+                                                    amount: extra,
+                                                    date: DateTime.now(),
+                                                    transactionId: txId,
+                                                  );
+                                                  await _loadLiabilities();
+                                                },
+                                                onSuccess: () async {
+                                                  if (context.mounted) Navigator.pop(context);
+                                                },
                                               );
-                                              await _loadLiabilities();
-                                              // removed
-                                              if (mounted) Navigator.pop(context);
                                             },
                                             child: const Text('Confirm'),
                                           ),
