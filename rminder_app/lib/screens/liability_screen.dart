@@ -45,7 +45,10 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
   void _maybeOpenEditFromIntent() {
     final id = UiIntents.editLiabilityId.value;
     if (id == null) return;
-    final idx = Provider.of<AppState>(context, listen: false).liabilities.indexWhere((l) => l.id == id);
+    final idx = Provider.of<AppState>(
+      context,
+      listen: false,
+    ).liabilities.indexWhere((l) => l.id == id);
     if (idx == -1) {
       return;
     }
@@ -54,7 +57,10 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
       _dialogOpenGuard = true;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        _addOrEditLiability(Provider.of<AppState>(context, listen: false).liabilities, index: idx);
+        _addOrEditLiability(
+          Provider.of<AppState>(context, listen: false).liabilities,
+          index: idx,
+        );
         await Future.delayed(const Duration(milliseconds: 300));
         if (mounted) _dialogOpenGuard = false;
       });
@@ -70,63 +76,122 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
     }
   }
 
-  void _addOrEditLiability(List<models.Liability> liabilitiesList, {int? index}) {
-    final nameController = TextEditingController(text: index != null ? liabilitiesList[index].name : '');
-  final balanceController = TextEditingController(text: index != null ? liabilitiesList[index].balance.toStringAsFixed(2) : '0.00');
-  final plannedController = TextEditingController(text: index != null ? liabilitiesList[index].planned.toStringAsFixed(2) : '0.00');
+  void _addOrEditLiability(
+    List<models.Liability> liabilitiesList, {
+    int? index,
+  }) {
+    final nameController = TextEditingController(
+      text: index != null ? liabilitiesList[index].name : '',
+    );
+    final balanceController = TextEditingController(
+      text: index != null
+          ? liabilitiesList[index].balance.toStringAsFixed(2)
+          : '0.00',
+    );
+    final plannedController = TextEditingController(
+      text: index != null
+          ? liabilitiesList[index].planned.toStringAsFixed(2)
+          : '0.00',
+    );
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(index == null ? 'Add Liability' : 'Edit Liability'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          StatefulBuilder(builder: (context, setState) {
-            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: 'Liability Name'),
-                maxLength: 20,
-              ),
-              TextField(
-                controller: balanceController,
-                decoration: const InputDecoration(labelText: 'Current Balance'),
-                keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
-                inputFormatters: [CurrencyInputFormatter()],
-              ),
-              TextField(
-                controller: plannedController,
-                decoration: const InputDecoration(labelText: 'Minimum Payment'),
-                keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
-                inputFormatters: [CurrencyInputFormatter()],
-              ),
-            ]);
-          }),
-        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            StatefulBuilder(
+              builder: (context, setState) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Liability Name',
+                      ),
+                      maxLength: 20,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: balanceController,
+                      decoration: const InputDecoration(
+                        labelText: 'Current Balance',
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: false,
+                        signed: false,
+                      ),
+                      inputFormatters: [CurrencyInputFormatter()],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: plannedController,
+                      decoration: const InputDecoration(
+                        labelText: 'Minimum Payment',
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: false,
+                        signed: false,
+                      ),
+                      inputFormatters: [CurrencyInputFormatter()],
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             onPressed: () async {
               final name = nameController.text.trim();
-              final balance = double.tryParse(balanceController.text.trim().replaceAll(',', '')) ?? 0;
-              final planned = double.tryParse(plannedController.text.trim().replaceAll(',', '')) ?? 0;
+              final balance =
+                  double.tryParse(
+                    balanceController.text.trim().replaceAll(',', ''),
+                  ) ??
+                  0;
+              final planned =
+                  double.tryParse(
+                    plannedController.text.trim().replaceAll(',', ''),
+                  ) ??
+                  0;
               if (name.isEmpty || balance < 0 || planned < 0) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter valid values.')));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter valid values.')),
+                );
                 return;
               }
               await runGuardedMutation(
                 context: context,
-                failureMessage: index == null ? 'Failed to add liability.' : 'Failed to update liability.',
+                failureMessage: index == null
+                    ? 'Failed to add liability.'
+                    : 'Failed to update liability.',
                 action: () async {
                   if (index == null) {
-                    final catId = await RMinderDatabase.instance.ensureDebtCategory(name, planned: planned);
+                    final catId = await RMinderDatabase.instance
+                        .ensureDebtCategory(name, planned: planned);
                     await RMinderDatabase.instance.insertLiability(
-                      models.Liability(name: name, balance: balance, planned: planned, budgetCategoryId: catId),
+                      models.Liability(
+                        name: name,
+                        balance: balance,
+                        planned: planned,
+                        budgetCategoryId: catId,
+                      ),
                     );
                   } else {
                     final liab = liabilitiesList[index];
                     int catId = liab.budgetCategoryId;
                     // Ensure category exists if missing (legacy)
                     if (catId <= 0) {
-                      catId = await RMinderDatabase.instance.ensureDebtCategory(name, planned: planned);
+                      catId = await RMinderDatabase.instance.ensureDebtCategory(
+                        name,
+                        planned: planned,
+                      );
                     }
                     await RMinderDatabase.instance.updateLiability(
                       models.Liability(
@@ -154,7 +219,10 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
     );
   }
 
-  Future<void> _removeLiability(List<models.Liability> liabilitiesList, int index) async {
+  Future<void> _removeLiability(
+    List<models.Liability> liabilitiesList,
+    int index,
+  ) async {
     final liab = liabilitiesList[index];
     final confirmed = await showDialog<bool>(
       context: context,
@@ -164,7 +232,10 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
           'Deleting "${liab.name}" will also delete its linked budget category and all its transactions. This action cannot be undone. Continue?',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
@@ -187,7 +258,9 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
       onSuccess: () async {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Liability "${liab.name}" and related data deleted.')),
+          SnackBar(
+            content: Text('Liability "${liab.name}" and related data deleted.'),
+          ),
         );
       },
     );
@@ -198,160 +271,306 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
     final appState = Provider.of<AppState>(context);
     final liabilitiesList = appState.liabilities;
     final paidThisMonth = appState.paidLiabilitiesThisMonth;
+    final theme = Theme.of(context);
     return Scaffold(
-  appBar: AppBar(title: const Text('Liabilities'), actions: buildGlobalAppBarActions(context)),
+      appBar: AppBar(
+        title: const Text('Liabilities'),
+        actions: buildGlobalAppBarActions(context),
+      ),
       body: Padding(
         padding: kCompactPagePadding,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          ElevatedButton.icon(
-            icon: const Icon(Icons.add),
-            label: const Text('Add Liability'),
-            onPressed: () => _addOrEditLiability(liabilitiesList),
-          ),
-          const SizedBox(height: kCompactSectionGap),
-          Expanded(
-            child: liabilitiesList.isEmpty
-                ? const Center(child: Text('No liabilities added yet.'))
-                : Scrollbar(
-                    controller: _liabScroll,
-                    thumbVisibility: true,
-                    child: ListView.builder(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Liability Accounts',
+                  style: compactSectionTitleStyle(context),
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add Liability'),
+                  onPressed: () => _addOrEditLiability(liabilitiesList),
+                ),
+              ],
+            ),
+            const SizedBox(height: kCompactSectionGap),
+            Expanded(
+              child: liabilitiesList.isEmpty
+                  ? const Center(child: Text('No liabilities added yet.'))
+                  : Scrollbar(
                       controller: _liabScroll,
-                      itemCount: liabilitiesList.length,
-                      itemBuilder: (context, index) {
-                        final liab = liabilitiesList[index];
-                        return CompactItemCard(
-                          child: ListTile(
-                            title: Text(liab.name),
-                            subtitle: Text('Balance: ₹${liab.balance.toStringAsFixed(2)} | Min: ₹${liab.planned.toStringAsFixed(2)}'),
-                            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                              IconButton(
-                                tooltip: 'Make payment',
-                                icon: const Icon(Icons.payment),
-                                onPressed: () async {
-                                  final paid = paidThisMonth[liab.id!] ?? 0.0;
-                                  final remaining = (liab.planned - paid).clamp(0, double.infinity);
-                                  if (remaining > 0) {
-                                    final controller = TextEditingController(text: remaining.toStringAsFixed(2));
-                                    showDialog(
-                                      context: context,
-                                      builder: (_) => AlertDialog(
-                                        title: Text('Pay ${liab.name}') ,
-                                        content: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text('Remaining planned this month: ₹${remaining.toStringAsFixed(2)}'),
-                                            const SizedBox(height: 8),
-                                            TextField(
-                                              controller: controller,
-                                              decoration: const InputDecoration(labelText: 'Amount to pay'),
-                                              keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
-                                              inputFormatters: [CurrencyInputFormatter()],
+                      thumbVisibility: true,
+                      child: ListView.builder(
+                        controller: _liabScroll,
+                        itemCount: liabilitiesList.length,
+                        itemBuilder: (context, index) {
+                          final liab = liabilitiesList[index];
+                          return CompactItemCard(
+                            child: ListTile(
+                              title: Text(
+                                liab.name,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              subtitle: Text(
+                                'Balance: ₹${liab.balance.toStringAsFixed(2)} | Min: ₹${liab.planned.toStringAsFixed(2)}',
+                                style: theme.textTheme.bodyMedium,
+                              ),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Make payment',
+                                    icon: Icon(
+                                      Icons.payment,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                    onPressed: () async {
+                                      final paid =
+                                          paidThisMonth[liab.id!] ?? 0.0;
+                                      final remaining = (liab.planned - paid)
+                                          .clamp(0, double.infinity);
+                                      if (remaining > 0) {
+                                        final controller =
+                                            TextEditingController(
+                                              text: remaining.toStringAsFixed(
+                                                2,
+                                              ),
+                                            );
+                                        showDialog(
+                                          context: context,
+                                          builder: (_) => AlertDialog(
+                                            title: Text('Pay ${liab.name}'),
+                                            content: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  'Remaining planned this month: ₹${remaining.toStringAsFixed(2)}',
+                                                ),
+                                                const SizedBox(height: 8),
+                                                TextField(
+                                                  controller: controller,
+                                                  decoration:
+                                                      const InputDecoration(
+                                                        labelText:
+                                                            'Amount to pay',
+                                                      ),
+                                                  keyboardType:
+                                                      const TextInputType.numberWithOptions(
+                                                        decimal: false,
+                                                        signed: false,
+                                                      ),
+                                                  inputFormatters: [
+                                                    CurrencyInputFormatter(),
+                                                  ],
+                                                ),
+                                              ],
                                             ),
-                                          ],
-                                        ),
-                                        actions: [
-                                          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-                                          ElevatedButton(
-                                            onPressed: () async {
-                                              final amt = double.tryParse(controller.text.trim().replaceAll(',', '')) ?? 0;
-                                              if (amt <= 0) {
-                                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid amount.')));
-                                                return;
-                                              }
-                                              await runGuardedMutation(
-                                                context: context,
-                                                failureMessage: 'Failed to record payment.',
-                                                action: () async {
-                                                  final txId = await RMinderDatabase.instance.payLiability(liab, amt);
-                                                  final afterPaid = paid + amt;
-                                                  final extra = afterPaid > liab.planned ? (afterPaid - liab.planned) : 0.0;
-                                                  if (extra > 0) {
-                                                    await RMinderDatabase.instance.insertExtraPayment(
-                                                      liabilityId: liab.id!,
-                                                      amount: extra,
-                                                      date: DateTime.now(),
-                                                      transactionId: txId,
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(context),
+                                                child: const Text('Cancel'),
+                                              ),
+                                              ElevatedButton(
+                                                onPressed: () async {
+                                                  final amt =
+                                                      double.tryParse(
+                                                        controller.text
+                                                            .trim()
+                                                            .replaceAll(
+                                                              ',',
+                                                              '',
+                                                            ),
+                                                      ) ??
+                                                      0;
+                                                  if (amt <= 0) {
+                                                    ScaffoldMessenger.of(
+                                                      context,
+                                                    ).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text(
+                                                          'Enter a valid amount.',
+                                                        ),
+                                                      ),
                                                     );
+                                                    return;
                                                   }
-                                                  await _loadLiabilities();
-                                                },
-                                                onSuccess: () async {
-                                                  if (context.mounted) Navigator.pop(context);
-                                                },
-                                              );
-                                            },
-                                            child: const Text('Confirm'),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  } else {
-                                    final controller = TextEditingController(text: '0.00');
-                                    showDialog(
-                                      context: context,
-                                      builder: (_) => AlertDialog(
-                                        title: Text('Extra payment - ${liab.name}'),
-                                        content: TextField(
-                                          controller: controller,
-                                          decoration: const InputDecoration(labelText: 'Extra amount'),
-                                          keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
-                                          inputFormatters: [CurrencyInputFormatter()],
-                                        ),
-                                        actions: [
-                                          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-                                          ElevatedButton(
-                                            onPressed: () async {
-                                              final extra = double.tryParse(controller.text.trim().replaceAll(',', '')) ?? 0;
-                                              if (extra <= 0) {
-                                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid amount.')));
-                                                return;
-                                              }
-                                              await runGuardedMutation(
-                                                context: context,
-                                                failureMessage: 'Failed to record extra payment.',
-                                                action: () async {
-                                                  final txId = await RMinderDatabase.instance.payLiability(liab, extra);
-                                                  await RMinderDatabase.instance.insertExtraPayment(
-                                                    liabilityId: liab.id!,
-                                                    amount: extra,
-                                                    date: DateTime.now(),
-                                                    transactionId: txId,
+                                                  await runGuardedMutation(
+                                                    context: context,
+                                                    failureMessage:
+                                                        'Failed to record payment.',
+                                                    action: () async {
+                                                      final txId =
+                                                          await RMinderDatabase
+                                                              .instance
+                                                              .payLiability(
+                                                                liab,
+                                                                amt,
+                                                              );
+                                                      final afterPaid =
+                                                          paid + amt;
+                                                      final extra =
+                                                          afterPaid >
+                                                              liab.planned
+                                                          ? (afterPaid -
+                                                                liab.planned)
+                                                          : 0.0;
+                                                      if (extra > 0) {
+                                                        await RMinderDatabase
+                                                            .instance
+                                                            .insertExtraPayment(
+                                                              liabilityId:
+                                                                  liab.id!,
+                                                              amount: extra,
+                                                              date:
+                                                                  DateTime.now(),
+                                                              transactionId:
+                                                                  txId,
+                                                            );
+                                                      }
+                                                      await _loadLiabilities();
+                                                    },
+                                                    onSuccess: () async {
+                                                      if (context.mounted)
+                                                        Navigator.pop(context);
+                                                    },
                                                   );
-                                                  await _loadLiabilities();
                                                 },
-                                                onSuccess: () async {
-                                                  if (context.mounted) Navigator.pop(context);
-                                                },
-                                              );
-                                            },
-                                            child: const Text('Confirm'),
+                                                child: const Text('Confirm'),
+                                              ),
+                                            ],
                                           ),
-                                        ],
-                                      ),
-                                    );
-                                  }
-                                },
+                                        );
+                                      } else {
+                                        final controller =
+                                            TextEditingController(text: '0.00');
+                                        showDialog(
+                                          context: context,
+                                          builder: (_) => AlertDialog(
+                                            title: Text(
+                                              'Extra payment - ${liab.name}',
+                                            ),
+                                            content: TextField(
+                                              controller: controller,
+                                              decoration: const InputDecoration(
+                                                labelText: 'Extra amount',
+                                              ),
+                                              keyboardType:
+                                                  const TextInputType.numberWithOptions(
+                                                    decimal: false,
+                                                    signed: false,
+                                                  ),
+                                              inputFormatters: [
+                                                CurrencyInputFormatter(),
+                                              ],
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(context),
+                                                child: const Text('Cancel'),
+                                              ),
+                                              ElevatedButton(
+                                                onPressed: () async {
+                                                  final extra =
+                                                      double.tryParse(
+                                                        controller.text
+                                                            .trim()
+                                                            .replaceAll(
+                                                              ',',
+                                                              '',
+                                                            ),
+                                                      ) ??
+                                                      0;
+                                                  if (extra <= 0) {
+                                                    ScaffoldMessenger.of(
+                                                      context,
+                                                    ).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text(
+                                                          'Enter a valid amount.',
+                                                        ),
+                                                      ),
+                                                    );
+                                                    return;
+                                                  }
+                                                  await runGuardedMutation(
+                                                    context: context,
+                                                    failureMessage:
+                                                        'Failed to record extra payment.',
+                                                    action: () async {
+                                                      final txId =
+                                                          await RMinderDatabase
+                                                              .instance
+                                                              .payLiability(
+                                                                liab,
+                                                                extra,
+                                                              );
+                                                      await RMinderDatabase
+                                                          .instance
+                                                          .insertExtraPayment(
+                                                            liabilityId:
+                                                                liab.id!,
+                                                            amount: extra,
+                                                            date:
+                                                                DateTime.now(),
+                                                            transactionId: txId,
+                                                          );
+                                                      await _loadLiabilities();
+                                                    },
+                                                    onSuccess: () async {
+                                                      if (context.mounted)
+                                                        Navigator.pop(context);
+                                                    },
+                                                  );
+                                                },
+                                                child: const Text('Confirm'),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      }
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.edit,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                    tooltip: 'Edit',
+                                    onPressed: () => _addOrEditLiability(
+                                      liabilitiesList,
+                                      index: index,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.delete,
+                                      color: theme.colorScheme.error,
+                                    ),
+                                    tooltip: 'Delete',
+                                    onPressed: () => _removeLiability(
+                                      liabilitiesList,
+                                      index,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.edit, color: Colors.blue),
-                                tooltip: 'Edit',
-                                onPressed: () => _addOrEditLiability(liabilitiesList, index: index),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                tooltip: 'Delete',
-                                onPressed: () => _removeLiability(liabilitiesList, index),
-                              ),
-                            ]),
-                          ),
-                        );
-                      },
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-          ),
-        ]),
+            ),
+          ],
+        ),
       ),
     );
   }

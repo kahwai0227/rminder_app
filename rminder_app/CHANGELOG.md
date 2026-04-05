@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.1] - 2026-04-05
+
+### Changed
+- Refined compact card styling across Budget, Savings, Liabilities, and Reports for clearer section/item hierarchy.
+- Updated item-card appearance to align with the app's button visual language (softer tone, subtle border, light elevation).
+- Tightened card spacing and adjusted inner padding for a denser but cleaner layout.
+- Applied item-card treatment to report sections for visual consistency with other pages.
+
+### Improved
+- Reports: moved the "Period Comparison" title outside the card to match section heading patterns.
+- Reports: added bottom spacing in Savings Contributions cards for better chart/progress breathing room.
+- Savings: added explicit inner horizontal padding for custom item-card content blocks.
+
 ## [1.5.0] - 2026-04-04
 
 ### Highlights

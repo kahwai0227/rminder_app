@@ -48,7 +48,8 @@ class _BudgetPageState extends State<BudgetPage> {
       }
       final d = appState.activePeriodStart;
       if (d != null) {
-        final key = 'carry_income:${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+        final key =
+            'carry_income:${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
         final str = await RMinderDatabase.instance.getSetting(key);
         final val = double.tryParse(str ?? '0') ?? 0.0;
         if (mounted) setState(() => _carryIncome = val);
@@ -69,7 +70,8 @@ class _BudgetPageState extends State<BudgetPage> {
     }
   }
 
-  double totalIncome(AppState state) => state.incomeSources.fold(0.0, (s, i) => s + i.amount) + _carryIncome;
+  double totalIncome(AppState state) =>
+      state.incomeSources.fold(0.0, (s, i) => s + i.amount) + _carryIncome;
 
   DateTime _activePeriodEndExclusive() {
     final now = DateTime.now();
@@ -79,15 +81,27 @@ class _BudgetPageState extends State<BudgetPage> {
   // Compute extras beyond plan for debts and funds within the active period
   double _extrasBeyondPlanForActivePeriod(AppState state) {
     if (state.activePeriodStart == null) return 0.0;
-    final ps = DateTime(state.activePeriodStart!.year, state.activePeriodStart!.month, state.activePeriodStart!.day);
+    final ps = DateTime(
+      state.activePeriodStart!.year,
+      state.activePeriodStart!.month,
+      state.activePeriodStart!.day,
+    );
     final pe = _activePeriodEndExclusive();
     // Debt and fund category ids
     final debtCatIds = state.liabilities.map((l) => l.budgetCategoryId).toSet();
-    final fundCatIds = state.sinkingFunds.where((f) => f.budgetCategoryId != null).map((f) => f.budgetCategoryId!).toSet();
+    final fundCatIds = state.sinkingFunds
+        .where((f) => f.budgetCategoryId != null)
+        .map((f) => f.budgetCategoryId!)
+        .toSet();
 
     // Planned totals
-    final plannedDebt = state.liabilities.where((l) => !l.isArchived).fold<double>(0.0, (s, l) => s + l.planned);
-    final plannedFunds = state.sinkingFunds.fold<double>(0.0, (s, f) => s + f.monthlyContribution);
+    final plannedDebt = state.liabilities
+        .where((l) => !l.isArchived)
+        .fold<double>(0.0, (s, l) => s + l.planned);
+    final plannedFunds = state.sinkingFunds.fold<double>(
+      0.0,
+      (s, f) => s + f.monthlyContribution,
+    );
 
     // Actuals in period
     double paidDebt = 0.0;
@@ -96,11 +110,14 @@ class _BudgetPageState extends State<BudgetPage> {
       if (!t.date.isBefore(ps) && t.date.isBefore(pe)) {
         if (debtCatIds.contains(t.categoryId)) paidDebt += t.amount;
         // Only count positive amounts as contributions (ignore withdrawals)
-        if (fundCatIds.contains(t.categoryId) && t.amount > 0) contributedFunds += t.amount;
+        if (fundCatIds.contains(t.categoryId) && t.amount > 0)
+          contributedFunds += t.amount;
       }
     }
     final extraDebt = paidDebt > plannedDebt ? (paidDebt - plannedDebt) : 0.0;
-    final extraFunds = contributedFunds > plannedFunds ? (contributedFunds - plannedFunds) : 0.0;
+    final extraFunds = contributedFunds > plannedFunds
+        ? (contributedFunds - plannedFunds)
+        : 0.0;
     final extras = extraDebt + extraFunds;
     return extras > 0 ? extras : 0.0;
   }
@@ -115,45 +132,67 @@ class _BudgetPageState extends State<BudgetPage> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            StatefulBuilder(builder: (context, setState) {
-              return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(labelText: 'Income Name'),
-                  maxLength: 15,
-                  onChanged: (_) => setState(() {}),
-                ),
-                if (nameController.text.length >= 15)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 4.0),
-                    child: Text('Maximum characters reached',
-                        style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.bold)),
-                  ),
-              ]);
-            }),
+            StatefulBuilder(
+              builder: (context, setState) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Income Name',
+                      ),
+                      maxLength: 15,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    if (nameController.text.length >= 15)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 4.0),
+                        child: Text(
+                          'Maximum characters reached',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
             TextField(
               controller: amountController,
               decoration: const InputDecoration(labelText: 'Amount'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
-              inputFormatters: [
-                CurrencyInputFormatter(),
-              ],
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: false,
+                signed: false,
+              ),
+              inputFormatters: [CurrencyInputFormatter()],
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             onPressed: () async {
               final name = nameController.text.trim();
               final amount = double.tryParse(amountController.text.trim()) ?? 0;
               if (name.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Name cannot be empty.')));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Name cannot be empty.')),
+                );
                 return;
               }
               if (amount <= 0) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(const SnackBar(content: Text('Amount must be greater than 0.')));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Amount must be greater than 0.'),
+                  ),
+                );
                 return;
               }
               await runGuardedMutation(
@@ -180,9 +219,12 @@ class _BudgetPageState extends State<BudgetPage> {
   Future<void> _showEditCarryIncomeDialog() async {
     final state = Provider.of<AppState>(context, listen: false);
     if (state.activePeriodStart == null) return;
-    final controller = TextEditingController(text: _carryIncome.toStringAsFixed(2));
+    final controller = TextEditingController(
+      text: _carryIncome.toStringAsFixed(2),
+    );
     final period = state.activePeriodStart!;
-    final key = 'carry_income:${period.year.toString().padLeft(4, '0')}-${period.month.toString().padLeft(2, '0')}-${period.day.toString().padLeft(2, '0')}';
+    final key =
+        'carry_income:${period.year.toString().padLeft(4, '0')}-${period.month.toString().padLeft(2, '0')}-${period.day.toString().padLeft(2, '0')}';
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -193,13 +235,19 @@ class _BudgetPageState extends State<BudgetPage> {
             TextField(
               controller: controller,
               decoration: const InputDecoration(labelText: 'Amount'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: false,
+                signed: false,
+              ),
               inputFormatters: [CurrencyInputFormatter()],
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             onPressed: () async {
               final amount = double.tryParse(controller.text.trim()) ?? 0.0;
@@ -207,7 +255,10 @@ class _BudgetPageState extends State<BudgetPage> {
                 context: context,
                 failureMessage: 'Failed to save carry-forward income.',
                 action: () async {
-                  await RMinderDatabase.instance.setSetting(key, amount.toStringAsFixed(2));
+                  await RMinderDatabase.instance.setSetting(
+                    key,
+                    amount.toStringAsFixed(2),
+                  );
                 },
                 onSuccess: () async {
                   if (!mounted) return;
@@ -223,8 +274,6 @@ class _BudgetPageState extends State<BudgetPage> {
     );
   }
 
-  
-
   Future<void> _deleteCarryIncome() async {
     final state = Provider.of<AppState>(context, listen: false);
     if (state.activePeriodStart == null) return;
@@ -232,16 +281,25 @@ class _BudgetPageState extends State<BudgetPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete carry-forward?'),
-        content: const Text('This removes the one-time carry-forward amount for this active period.'),
+        content: const Text(
+          'This removes the one-time carry-forward amount for this active period.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
         ],
       ),
     );
     if (confirm != true || !mounted) return;
     final period = state.activePeriodStart!;
-    final key = 'carry_income:${period.year.toString().padLeft(4, '0')}-${period.month.toString().padLeft(2, '0')}-${period.day.toString().padLeft(2, '0')}';
+    final key =
+        'carry_income:${period.year.toString().padLeft(4, '0')}-${period.month.toString().padLeft(2, '0')}-${period.day.toString().padLeft(2, '0')}';
     await runGuardedMutation(
       context: context,
       failureMessage: 'Failed to delete carry-forward income.',
@@ -260,10 +318,18 @@ class _BudgetPageState extends State<BudgetPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Income'),
-        content: const Text('Are you sure you want to delete this income source?'),
+        content: const Text(
+          'Are you sure you want to delete this income source?',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
         ],
       ),
     );
@@ -283,7 +349,9 @@ class _BudgetPageState extends State<BudgetPage> {
 
   Future<void> _showEditIncomeSourceDialog(models.IncomeSource source) async {
     final nameController = TextEditingController(text: source.name);
-    final amountController = TextEditingController(text: source.amount.toStringAsFixed(2));
+    final amountController = TextEditingController(
+      text: source.amount.toStringAsFixed(2),
+    );
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -291,45 +359,67 @@ class _BudgetPageState extends State<BudgetPage> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            StatefulBuilder(builder: (context, setState) {
-              return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(labelText: 'Income Name'),
-                  maxLength: 15,
-                  onChanged: (_) => setState(() {}),
-                ),
-                if (nameController.text.length >= 15)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 4.0),
-                    child: Text('Maximum characters reached',
-                        style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.bold)),
-                  ),
-              ]);
-            }),
+            StatefulBuilder(
+              builder: (context, setState) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Income Name',
+                      ),
+                      maxLength: 15,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    if (nameController.text.length >= 15)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 4.0),
+                        child: Text(
+                          'Maximum characters reached',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
             TextField(
               controller: amountController,
               decoration: const InputDecoration(labelText: 'Amount'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
-              inputFormatters: [
-                CurrencyInputFormatter(),
-              ],
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: false,
+                signed: false,
+              ),
+              inputFormatters: [CurrencyInputFormatter()],
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             onPressed: () async {
               final name = nameController.text.trim();
               final amount = double.tryParse(amountController.text.trim()) ?? 0;
               if (name.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Name cannot be empty.')));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Name cannot be empty.')),
+                );
                 return;
               }
               if (amount <= 0) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(const SnackBar(content: Text('Amount must be greater than 0.')));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Amount must be greater than 0.'),
+                  ),
+                );
                 return;
               }
               await runGuardedMutation(
@@ -337,7 +427,11 @@ class _BudgetPageState extends State<BudgetPage> {
                 failureMessage: 'Failed to update income source.',
                 action: () async {
                   await RMinderDatabase.instance.updateIncomeSource(
-                    models.IncomeSource(id: source.id, name: name, amount: amount),
+                    models.IncomeSource(
+                      id: source.id,
+                      name: name,
+                      amount: amount,
+                    ),
                   );
                 },
                 onSuccess: () async {
@@ -356,15 +450,21 @@ class _BudgetPageState extends State<BudgetPage> {
   Future<void> _showAddCategoryDialog() async {
     final state = Provider.of<AppState>(context, listen: false);
     final unbudgeted = state.categories.where((c) => !c.inBudget).toList();
-    String selectedCatId = unbudgeted.isNotEmpty ? unbudgeted.first.id.toString() : 'new';
-    
+    String selectedCatId = unbudgeted.isNotEmpty
+        ? unbudgeted.first.id.toString()
+        : 'new';
+
     final nameController = TextEditingController();
     final limitController = TextEditingController(text: '0.00');
     double sliderValue = 0;
-    final allocated = state.categories.where((c) => c.inBudget).fold<double>(0.0, (s, c) => s + c.budgetLimit);
+    final allocated = state.categories
+        .where((c) => c.inBudget)
+        .fold<double>(0.0, (s, c) => s + c.budgetLimit);
     final extras = _extrasBeyondPlanForActivePeriod(state);
     final available = totalIncome(state) - allocated - extras;
-    final double maxValue = totalIncome(state) > 0 ? (available.clamp(0.0, totalIncome(state))).toDouble() : 10000.0;
+    final double maxValue = totalIncome(state) > 0
+        ? (available.clamp(0.0, totalIncome(state))).toDouble()
+        : 10000.0;
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -372,146 +472,214 @@ class _BudgetPageState extends State<BudgetPage> {
         content: SizedBox(
           width: 480,
           child: SingleChildScrollView(
-            child: StatefulBuilder(builder: (context, setState) {
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (unbudgeted.isNotEmpty) ...[
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            initialValue: selectedCatId,
-                            decoration: const InputDecoration(labelText: 'Select Category'),
-                            items: [
-                              ...unbudgeted.map((c) => DropdownMenuItem(value: c.id.toString(), child: Text(c.name))),
-                              const DropdownMenuItem(value: 'new', child: Text('+ Create New Category')),
-                            ],
-                            onChanged: (val) {
-                              setState(() { selectedCatId = val!; });
-                            },
-                          ),
-                        ),
-                        if (selectedCatId != 'new')
-                          IconButton(
-                            icon: const Icon(Icons.delete_forever, color: Colors.red),
-                            tooltip: 'Permanently Delete Category',
-                            onPressed: () async {
-                              final cat = unbudgeted.firstWhere((c) => c.id.toString() == selectedCatId);
-                              final hasTransactions = await RMinderDatabase.instance.hasTransactionsForCategory(cat.id ?? 0);
-                              if (!context.mounted) return;
-                              final confirm = await showDialog<bool>(
-                                context: context,
-                                builder: (ctx) => AlertDialog(
-                                  title: const Text('Completely Delete Category?!'),
-                                  content: Text(
-                                    hasTransactions
-                                        ? 'WARNING: This inactive category has past transactions. Deleting it completely will PERMANENTLY delete all associated past transactions too! Do you want to proceed?'
-                                        : 'Are you sure you want to permanently delete this inactive category?',
+            child: StatefulBuilder(
+              builder: (context, setState) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (unbudgeted.isNotEmpty) ...[
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              initialValue: selectedCatId,
+                              decoration: const InputDecoration(
+                                labelText: 'Select Category',
+                              ),
+                              items: [
+                                ...unbudgeted.map(
+                                  (c) => DropdownMenuItem(
+                                    value: c.id.toString(),
+                                    child: Text(c.name),
                                   ),
-                                  actions: [
-                                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                                    ElevatedButton(
-                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                                      onPressed: () => Navigator.pop(ctx, true), 
-                                      child: const Text('Delete Permanently')
-                                    ),
-                                  ],
                                 ),
-                              );
-                              
-                              if (confirm != true || !context.mounted) return;
-                              await runGuardedMutation(
-                                context: context,
-                                failureMessage: 'Failed to delete category.',
-                                action: () async {
-                                  await RMinderDatabase.instance.deleteCategoryCascade(cat.id!);
-                                },
-                                onSuccess: () async {
-                                  await Provider.of<AppState>(context, listen: false).refresh();
-                                  if (!context.mounted) return;
-                                  Navigator.pop(context); // close the Add Budget dialog
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Category completely deleted.')),
-                                  );
-                                },
-                              );
-                            },
+                                const DropdownMenuItem(
+                                  value: 'new',
+                                  child: Text('+ Create New Category'),
+                                ),
+                              ],
+                              onChanged: (val) {
+                                setState(() {
+                                  selectedCatId = val!;
+                                });
+                              },
+                            ),
                           ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  if (selectedCatId == 'new') ...[
-                    TextField(
-                      controller: nameController,
-                      decoration: const InputDecoration(labelText: 'New Category Name'),
-                      maxLength: 15,
-                      onChanged: (_) => setState(() {}),
-                    ),
-                    if (nameController.text.length >= 15)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 4.0),
-                        child: Text(
-                          'Maximum characters reached',
-                          style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.bold),
-                        ),
+                          if (selectedCatId != 'new')
+                            IconButton(
+                              icon: const Icon(
+                                Icons.delete_forever,
+                                color: Colors.red,
+                              ),
+                              tooltip: 'Permanently Delete Category',
+                              onPressed: () async {
+                                final cat = unbudgeted.firstWhere(
+                                  (c) => c.id.toString() == selectedCatId,
+                                );
+                                final hasTransactions = await RMinderDatabase
+                                    .instance
+                                    .hasTransactionsForCategory(cat.id ?? 0);
+                                if (!context.mounted) return;
+                                final confirm = await showDialog<bool>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text(
+                                      'Completely Delete Category?!',
+                                    ),
+                                    content: Text(
+                                      hasTransactions
+                                          ? 'WARNING: This inactive category has past transactions. Deleting it completely will PERMANENTLY delete all associated past transactions too! Do you want to proceed?'
+                                          : 'Are you sure you want to permanently delete this inactive category?',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, false),
+                                        child: const Text('Cancel'),
+                                      ),
+                                      ElevatedButton(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.red,
+                                        ),
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, true),
+                                        child: const Text('Delete Permanently'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+
+                                if (confirm != true || !context.mounted) return;
+                                await runGuardedMutation(
+                                  context: context,
+                                  failureMessage: 'Failed to delete category.',
+                                  action: () async {
+                                    await RMinderDatabase.instance
+                                        .deleteCategoryCascade(cat.id!);
+                                  },
+                                  onSuccess: () async {
+                                    await Provider.of<AppState>(
+                                      context,
+                                      listen: false,
+                                    ).refresh();
+                                    if (!context.mounted) return;
+                                    Navigator.pop(
+                                      context,
+                                    ); // close the Add Budget dialog
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Category completely deleted.',
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                        ],
                       ),
-                  ],
-                  const SizedBox(height: 16),
-                  Row(children: [
-                    Expanded(
-                      child: SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          trackHeight: 8,
-                          activeTrackColor: Colors.deepPurple[700],
-                          inactiveTrackColor: Colors.deepPurple[200],
-                          thumbColor: Colors.deepPurple[900],
-                          overlayColor: Colors.deepPurple.withValues(alpha: 0.2),
-                          valueIndicatorColor: Colors.deepPurple[700],
+                      const SizedBox(height: 12),
+                    ],
+                    if (selectedCatId == 'new') ...[
+                      TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'New Category Name',
                         ),
-                        child: Slider(
-                          value: sliderValue,
-                          min: 0,
-                          max: maxValue,
-                          divisions: null,
-                          label: '₹',
-                          onChanged: (v) {
-                            setState(() {
-                              sliderValue = v;
-                              limitController.text = v.toStringAsFixed(2);
-                            });
+                        maxLength: 15,
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      if (nameController.text.length >= 15)
+                        const Padding(
+                          padding: EdgeInsets.only(left: 4.0),
+                          child: Text(
+                            'Maximum characters reached',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.red,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                    ],
+                    const SizedBox(height: 16),
+                    Text(
+                      'Monthly Limit',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 8,
+                        activeTrackColor: Colors.deepPurple[700],
+                        inactiveTrackColor: Colors.deepPurple[200],
+                        thumbColor: Colors.deepPurple[900],
+                        overlayColor: Colors.deepPurple.withValues(alpha: 0.2),
+                        valueIndicatorColor: Colors.deepPurple[700],
+                      ),
+                      child: Slider(
+                        value: sliderValue,
+                        min: 0,
+                        max: maxValue,
+                        divisions: null,
+                        label: '₹${sliderValue.toStringAsFixed(2)}',
+                        onChanged: (v) {
+                          setState(() {
+                            sliderValue = v;
+                            limitController.text = v.toStringAsFixed(2);
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: SizedBox(
+                        width: 140,
+                        child: TextField(
+                          controller: limitController,
+                          decoration: const InputDecoration(
+                            labelText: 'Amount',
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: false,
+                            signed: false,
+                          ),
+                          inputFormatters: [CurrencyInputFormatter()],
+                          onChanged: (val) {
+                            final parsed = double.tryParse(val) ?? 0;
+                            setState(
+                              () => sliderValue = parsed
+                                  .clamp(0.0, maxValue)
+                                  .toDouble(),
+                            );
                           },
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 100,
-                      child: TextField(
-                        controller: limitController,
-                        decoration: const InputDecoration(labelText: 'Monthly Limit'),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
-                        inputFormatters: [CurrencyInputFormatter()],
-                        onChanged: (val) {
-                          final parsed = double.tryParse(val) ?? 0;
-                          setState(() => sliderValue = parsed.clamp(0.0, maxValue).toDouble());
-                        },
-                      ),
-                    ),
-                  ]),
-                ],
-              );
-            }),
+                  ],
+                );
+              },
+            ),
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             onPressed: () async {
-              final budgetLimit = double.tryParse(limitController.text.trim().replaceAll(',', '')) ?? 0;
+              final budgetLimit =
+                  double.tryParse(
+                    limitController.text.trim().replaceAll(',', ''),
+                  ) ??
+                  0;
               if (budgetLimit > 0) {
                 if (selectedCatId == 'new') {
                   final name = nameController.text.trim();
@@ -521,17 +689,27 @@ class _BudgetPageState extends State<BudgetPage> {
                       failureMessage: 'Failed to add budget category.',
                       action: () async {
                         await RMinderDatabase.instance.insertCategory(
-                          models.BudgetCategory(name: name, budgetLimit: budgetLimit, spent: 0, inBudget: true),
+                          models.BudgetCategory(
+                            name: name,
+                            budgetLimit: budgetLimit,
+                            spent: 0,
+                            inBudget: true,
+                          ),
                         );
                       },
                       onSuccess: () async {
-                        await Provider.of<AppState>(context, listen: false).refresh();
+                        await Provider.of<AppState>(
+                          context,
+                          listen: false,
+                        ).refresh();
                         if (context.mounted) Navigator.pop(context);
                       },
                     );
                   }
                 } else {
-                  final cat = unbudgeted.firstWhere((c) => c.id.toString() == selectedCatId);
+                  final cat = unbudgeted.firstWhere(
+                    (c) => c.id.toString() == selectedCatId,
+                  );
                   await runGuardedMutation(
                     context: context,
                     failureMessage: 'Failed to add category to budget.',
@@ -547,7 +725,10 @@ class _BudgetPageState extends State<BudgetPage> {
                       );
                     },
                     onSuccess: () async {
-                      await Provider.of<AppState>(context, listen: false).refresh();
+                      await Provider.of<AppState>(
+                        context,
+                        listen: false,
+                      ).refresh();
                       if (context.mounted) Navigator.pop(context);
                     },
                   );
@@ -561,19 +742,23 @@ class _BudgetPageState extends State<BudgetPage> {
     );
   }
 
-
   Future<void> _showEditCategoryDialog(models.BudgetCategory category) async {
     final state = Provider.of<AppState>(context, listen: false);
     final nameController = TextEditingController(text: category.name);
     double sliderValue = category.budgetLimit;
-    final allocatedOthers =
-        state.categories.where((c) => c.id != category.id).fold<double>(0.0, (s, c) => s + c.budgetLimit);
+    final allocatedOthers = state.categories
+        .where((c) => c.id != category.id)
+        .fold<double>(0.0, (s, c) => s + c.budgetLimit);
     final extras = _extrasBeyondPlanForActivePeriod(state);
     final totalInc = totalIncome(state);
     final available = totalInc - allocatedOthers - extras;
-    final double maxValue = totalInc > 0 ? (available.clamp(0.0, totalInc)).toDouble() : 10000.0;
+    final double maxValue = totalInc > 0
+        ? (available.clamp(0.0, totalInc)).toDouble()
+        : 10000.0;
     sliderValue = sliderValue.clamp(0.0, maxValue).toDouble();
-    final limitController = TextEditingController(text: sliderValue.toStringAsFixed(2));
+    final limitController = TextEditingController(
+      text: sliderValue.toStringAsFixed(2),
+    );
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -583,30 +768,48 @@ class _BudgetPageState extends State<BudgetPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              StatefulBuilder(builder: (context, setState) {
-                return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(labelText: 'Category Name'),
-                    maxLength: 15,
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  if (nameController.text.length >= 15)
-                    const Padding(
-                      padding: EdgeInsets.only(left: 4.0),
-                      child: Text('Maximum characters reached',
-                          style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.bold)),
-                    ),
-                  const SizedBox(height: 16),
-                  Row(children: [
-                    Expanded(
-                      child: SliderTheme(
+              StatefulBuilder(
+                builder: (context, setState) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Category Name',
+                        ),
+                        maxLength: 15,
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      if (nameController.text.length >= 15)
+                        const Padding(
+                          padding: EdgeInsets.only(left: 4.0),
+                          child: Text(
+                            'Maximum characters reached',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.red,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Monthly Limit',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SliderTheme(
                         data: SliderTheme.of(context).copyWith(
                           trackHeight: 8,
                           activeTrackColor: Colors.deepPurple[700],
                           inactiveTrackColor: Colors.deepPurple[200],
                           thumbColor: Colors.deepPurple[900],
-                          overlayColor: Colors.deepPurple.withValues(alpha: 0.2),
+                          overlayColor: Colors.deepPurple.withValues(
+                            alpha: 0.2,
+                          ),
                           valueIndicatorColor: Colors.deepPurple[700],
                         ),
                         child: Slider(
@@ -623,49 +826,71 @@ class _BudgetPageState extends State<BudgetPage> {
                           },
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 100,
-                      child: TextField(
-                        controller: limitController,
-                        decoration: const InputDecoration(labelText: 'Monthly Limit'),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: false),
-                        inputFormatters: [
-                          CurrencyInputFormatter(),
-                        ],
-                        onChanged: (val) {
-                          final parsed = double.tryParse(val) ?? 0;
-                          setState(() => sliderValue = parsed.clamp(0.0, maxValue).toDouble());
-                        },
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: SizedBox(
+                          width: 140,
+                          child: TextField(
+                            controller: limitController,
+                            decoration: const InputDecoration(
+                              labelText: 'Amount',
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: false,
+                              signed: false,
+                            ),
+                            inputFormatters: [CurrencyInputFormatter()],
+                            onChanged: (val) {
+                              final parsed = double.tryParse(val) ?? 0;
+                              setState(
+                                () => sliderValue = parsed
+                                    .clamp(0.0, maxValue)
+                                    .toDouble(),
+                              );
+                            },
+                          ),
+                        ),
                       ),
-                    ),
-                  ]),
-                ]);
-              }),
+                    ],
+                  );
+                },
+              ),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             onPressed: () async {
               final name = nameController.text.trim();
-              final budgetLimit = double.tryParse(limitController.text.trim().replaceAll(',', '')) ?? 0;
+              final budgetLimit =
+                  double.tryParse(
+                    limitController.text.trim().replaceAll(',', ''),
+                  ) ??
+                  0;
               if (name.isNotEmpty && budgetLimit > 0) {
                 await runGuardedMutation(
                   context: context,
                   failureMessage: 'Failed to update category.',
                   action: () async {
-                    await RMinderDatabase.instance.updateCategory(models.BudgetCategory(
-                      id: category.id,
-                      name: name,
-                      budgetLimit: budgetLimit,
-                      spent: category.spent,
-                    ));
+                    await RMinderDatabase.instance.updateCategory(
+                      models.BudgetCategory(
+                        id: category.id,
+                        name: name,
+                        budgetLimit: budgetLimit,
+                        spent: category.spent,
+                      ),
+                    );
                   },
                   onSuccess: () async {
-                    await Provider.of<AppState>(context, listen: false).refresh();
+                    await Provider.of<AppState>(
+                      context,
+                      listen: false,
+                    ).refresh();
                     if (context.mounted) Navigator.pop(context);
                   },
                 );
@@ -683,10 +908,18 @@ class _BudgetPageState extends State<BudgetPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Remove from Budget?'),
-        content: const Text('This will remove the category from the active budget, but keep your past transactions safe.'),
+        content: const Text(
+          'This will remove the category from the active budget, but keep your past transactions safe.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
         ],
       ),
     );
@@ -712,23 +945,27 @@ class _BudgetPageState extends State<BudgetPage> {
     }
   }
 
-  
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Budget'), actions: buildGlobalAppBarActions(context)),
+      appBar: AppBar(
+        title: const Text('Budget'),
+        actions: buildGlobalAppBarActions(context),
+      ),
       body: Consumer<AppState>(
         builder: (context, appState, child) {
           if (appState.isLoading) {
             return const Center(child: CircularProgressIndicator());
           }
-          
+
           final totalInc = totalIncome(appState);
-          final categories = appState.categories.where((c) => c.inBudget).toList();
+          final categories = appState.categories
+              .where((c) => c.inBudget)
+              .toList();
           final incomeSources = appState.incomeSources;
           final sinkingFunds = appState.sinkingFunds;
           final liabilities = appState.liabilities;
+          final theme = Theme.of(context);
 
           return Column(
             children: [
@@ -744,196 +981,435 @@ class _BudgetPageState extends State<BudgetPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                    CompactSectionCard(
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                            const Text('Income', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                            Row(children: [
-                              ElevatedButton.icon(
-                                icon: const Icon(Icons.add),
-                                label: const Text('Add'),
-                                onPressed: _showAddIncomeSourceDialog,
-                                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                              ),
-                              const SizedBox(width: 8),
-                            ]),
-                          ]),
-                          const SizedBox(height: 10),
-                          if (_carryIncome > 0)
-                            CompactItemCard(
-                              child: ListTile(
-                                title: Text('Carry-forward', style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
-                                subtitle: Text('Amount: ₹${_carryIncome.toStringAsFixed(2)}'),
-                                trailing: Wrap(spacing: 4, children: [
-                                  IconButton(icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary), onPressed: _showEditCarryIncomeDialog),
-                                  IconButton(icon: Icon(Icons.delete_forever, color: Theme.of(context).colorScheme.error), tooltip: 'Delete', onPressed: _deleteCarryIncome),
-                                ]),
-                              ),
-                            ),
-                          incomeSources.isEmpty
-                              ? const Center(child: Text('No income sources yet.'))
-                              : Column(
-                                  children: incomeSources.map((src) => CompactItemCard(
-                                    child: ListTile(
-                                      title: Text(src.name, style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
-                                      subtitle: Text('Amount: ₹${src.amount.toStringAsFixed(2)}'),
-                                      trailing: Wrap(spacing: 4, children: [
-                                        IconButton(icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary), onPressed: () => _showEditIncomeSourceDialog(src)),
-                                        IconButton(icon: Icon(Icons.delete, color: Theme.of(context).colorScheme.error), onPressed: () => _deleteIncomeSource(src.id!)),
-                                      ]),
-                                    ),
-                                  )).toList(),
-                                ),
-                        ]),
-                    ),
-                    const SizedBox(height: kCompactSectionGap),
-                    CompactSectionCard(
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                            const Text('Budget', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                            ElevatedButton.icon(
-                              icon: const Icon(Icons.add),
-                              label: const Text('Add'),
-                              onPressed: () {
-                                if (totalInc == 0) {
-                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                                      content: Text('Please add your income before adding a budget category.')));
-                                } else {
-                                  _showAddCategoryDialog();
-                                }
-                              },
-                              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                            ),
-                          ]),
-                          const SizedBox(height: 10),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
+                          CompactSectionCard(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(Icons.shopping_bag, size: 18, color: Theme.of(context).colorScheme.primary),
-                                const SizedBox(width: 6),
-                                Text('Expenses', style: Theme.of(context).textTheme.titleMedium),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          ...categories
-                            .where((c) =>
-                              !liabilities.any((l) => l.budgetCategoryId == c.id) &&
-                              !sinkingFunds.any((f) => f.budgetCategoryId == c.id))
-                              .map((category) => CompactItemCard(
-                                    child: ListTile(
-                                      key: ValueKey(category.id),
-                                      title: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            category.name.length > 15 ? '${category.name.substring(0, 15)}...' : category.name,
-                                            style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'Income',
+                                      style: compactSectionTitleStyle(context),
+                                    ),
+                                    Row(
+                                      children: [
+                                        ElevatedButton.icon(
+                                          icon: const Icon(Icons.add),
+                                          label: const Text('Add'),
+                                          onPressed: _showAddIncomeSourceDialog,
+                                          style: ElevatedButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 8,
+                                            ),
                                           ),
-                                          const SizedBox(height: 4),
-                                          Text('Limit: ₹${category.budgetLimit.toStringAsFixed(2)}', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                if (_carryIncome > 0)
+                                  CompactItemCard(
+                                    child: ListTile(
+                                      title: Text(
+                                        'Carry-forward',
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                      ),
+                                      subtitle: Text(
+                                        'Amount: ₹${_carryIncome.toStringAsFixed(2)}',
+                                        style: theme.textTheme.bodyMedium,
+                                      ),
+                                      trailing: Wrap(
+                                        spacing: 4,
+                                        children: [
+                                          IconButton(
+                                            icon: Icon(
+                                              Icons.edit,
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.primary,
+                                            ),
+                                            onPressed:
+                                                _showEditCarryIncomeDialog,
+                                          ),
+                                          IconButton(
+                                            icon: Icon(
+                                              Icons.delete_forever,
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.error,
+                                            ),
+                                            tooltip: 'Delete',
+                                            onPressed: _deleteCarryIncome,
+                                          ),
                                         ],
                                       ),
-                                      trailing: Wrap(spacing: 4, children: [
-                                        IconButton(icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary), onPressed: () => _showEditCategoryDialog(category)),
-                                        IconButton(icon: Icon(Icons.delete, color: Theme.of(context).colorScheme.error), onPressed: () => _removeFromBudget(category)),
-                                      ]),
                                     ),
-                                  )),
-                          const SizedBox(height: 10),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.savings, size: 18, color: Theme.of(context).colorScheme.primary),
-                                const SizedBox(width: 6),
-                                Text('Liabilities', style: Theme.of(context).textTheme.titleMedium),
+                                  ),
+                                incomeSources.isEmpty
+                                    ? const Center(
+                                        child: Text('No income sources yet.'),
+                                      )
+                                    : Column(
+                                        children: incomeSources
+                                            .map(
+                                              (src) => CompactItemCard(
+                                                child: ListTile(
+                                                  title: Text(
+                                                    src.name,
+                                                    style: theme
+                                                        .textTheme
+                                                        .titleMedium
+                                                        ?.copyWith(
+                                                          fontWeight:
+                                                              FontWeight.w700,
+                                                        ),
+                                                  ),
+                                                  subtitle: Text(
+                                                    'Amount: ₹${src.amount.toStringAsFixed(2)}',
+                                                    style: theme
+                                                        .textTheme
+                                                        .bodyMedium,
+                                                  ),
+                                                  trailing: Wrap(
+                                                    spacing: 4,
+                                                    children: [
+                                                      IconButton(
+                                                        icon: Icon(
+                                                          Icons.edit,
+                                                          color: Theme.of(
+                                                            context,
+                                                          ).colorScheme.primary,
+                                                        ),
+                                                        onPressed: () =>
+                                                            _showEditIncomeSourceDialog(
+                                                              src,
+                                                            ),
+                                                      ),
+                                                      IconButton(
+                                                        icon: Icon(
+                                                          Icons.delete,
+                                                          color: Theme.of(
+                                                            context,
+                                                          ).colorScheme.error,
+                                                        ),
+                                                        onPressed: () =>
+                                                            _deleteIncomeSource(
+                                                              src.id!,
+                                                            ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                            .toList(),
+                                      ),
                               ],
                             ),
                           ),
-                          const SizedBox(height: 6),
-                          if (liabilities.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 6.0),
-                              child: Text('No liabilities added yet.'),
-                            )
-                          else
-                            ...liabilities.map((liab) => CompactItemCard(
-                                  child: ListTile(
-                                    key: ValueKey('liab-${liab.id}'),
-                                    title: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(liab.name, style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface)),
-                                        const SizedBox(height: 4),
-                                        Text('Min: ₹${liab.planned.toStringAsFixed(2)}', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-                                      ],
-                                    ),
-                                    trailing: Wrap(spacing: 4, children: [
-                                      IconButton(
-                                        icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
-                                        tooltip: 'Edit in Liabilities',
-                                        onPressed: () {
-                                          TabSwitcher.of(context)?.switchTo(3);
-                                        },
-                                      ),
-                                    ]),
-                                  ),
-                                )),
-                          const SizedBox(height: 10),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
+                          const SizedBox(height: kCompactSectionGap),
+                          CompactSectionCard(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(Icons.attach_money, size: 18, color: Theme.of(context).colorScheme.primary),
-                                const SizedBox(width: 6),
-                                Text('Savings', style: Theme.of(context).textTheme.titleMedium),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'Budget',
+                                      style: compactSectionTitleStyle(context),
+                                    ),
+                                    ElevatedButton.icon(
+                                      icon: const Icon(Icons.add),
+                                      label: const Text('Add'),
+                                      onPressed: () {
+                                        if (totalInc == 0) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Please add your income before adding a budget category.',
+                                              ),
+                                            ),
+                                          );
+                                        } else {
+                                          _showAddCategoryDialog();
+                                        }
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 8,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.shopping_bag,
+                                        size: 18,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'Expenses',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                ...categories
+                                    .where(
+                                      (c) =>
+                                          !liabilities.any(
+                                            (l) => l.budgetCategoryId == c.id,
+                                          ) &&
+                                          !sinkingFunds.any(
+                                            (f) => f.budgetCategoryId == c.id,
+                                          ),
+                                    )
+                                    .map(
+                                      (category) => CompactItemCard(
+                                        child: ListTile(
+                                          key: ValueKey(category.id),
+                                          title: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                category.name.length > 15
+                                                    ? '${category.name.substring(0, 15)}...'
+                                                    : category.name,
+                                                style: theme
+                                                    .textTheme
+                                                    .titleMedium
+                                                    ?.copyWith(
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                'Limit: ₹${category.budgetLimit.toStringAsFixed(2)}',
+                                                style:
+                                                    theme.textTheme.bodyMedium,
+                                              ),
+                                            ],
+                                          ),
+                                          trailing: Wrap(
+                                            spacing: 4,
+                                            children: [
+                                              IconButton(
+                                                icon: Icon(
+                                                  Icons.edit,
+                                                  color: Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary,
+                                                ),
+                                                onPressed: () =>
+                                                    _showEditCategoryDialog(
+                                                      category,
+                                                    ),
+                                              ),
+                                              IconButton(
+                                                icon: Icon(
+                                                  Icons.delete,
+                                                  color: Theme.of(
+                                                    context,
+                                                  ).colorScheme.error,
+                                                ),
+                                                onPressed: () =>
+                                                    _removeFromBudget(category),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                const SizedBox(height: 10),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.savings,
+                                        size: 18,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'Liabilities',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                if (liabilities.isEmpty)
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      vertical: 6.0,
+                                    ),
+                                    child: Text('No liabilities added yet.'),
+                                  )
+                                else
+                                  ...liabilities.map(
+                                    (liab) => CompactItemCard(
+                                      child: ListTile(
+                                        key: ValueKey('liab-${liab.id}'),
+                                        title: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              liab.name,
+                                              style: theme.textTheme.titleMedium
+                                                  ?.copyWith(
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              'Min: ₹${liab.planned.toStringAsFixed(2)}',
+                                              style: theme.textTheme.bodyMedium,
+                                            ),
+                                          ],
+                                        ),
+                                        trailing: Wrap(
+                                          spacing: 4,
+                                          children: [
+                                            IconButton(
+                                              icon: Icon(
+                                                Icons.edit,
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.primary,
+                                              ),
+                                              tooltip: 'Edit in Liabilities',
+                                              onPressed: () {
+                                                TabSwitcher.of(
+                                                  context,
+                                                )?.switchTo(3);
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                const SizedBox(height: 10),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.attach_money,
+                                        size: 18,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'Savings',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                if (sinkingFunds.isEmpty)
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      vertical: 6.0,
+                                    ),
+                                    child: Text('No savings funds added yet.'),
+                                  )
+                                else
+                                  ...sinkingFunds.map(
+                                    (fund) => CompactItemCard(
+                                      child: ListTile(
+                                        key: ValueKey('fund-${fund.id}'),
+                                        title: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              fund.name,
+                                              style: theme.textTheme.titleMedium
+                                                  ?.copyWith(
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              'Monthly: ₹${fund.monthlyContribution.toStringAsFixed(2)}',
+                                              style: compactMutedStyle(context),
+                                            ),
+                                          ],
+                                        ),
+                                        trailing: Wrap(
+                                          spacing: 4,
+                                          children: [
+                                            IconButton(
+                                              icon: Icon(
+                                                Icons.edit,
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.primary,
+                                              ),
+                                              tooltip: 'Edit in Savings',
+                                              onPressed: () {
+                                                TabSwitcher.of(
+                                                  context,
+                                                )?.switchTo(2);
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                               ],
                             ),
                           ),
-                          const SizedBox(height: 6),
-                          if (sinkingFunds.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 6.0),
-                              child: Text('No savings funds added yet.'),
-                            )
-                          else
-                            ...sinkingFunds.map((fund) => CompactItemCard(
-                                  child: ListTile(
-                                    key: ValueKey('fund-${fund.id}'),
-                                    title: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(fund.name, style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface)),
-                                        const SizedBox(height: 4),
-                                        Text('Monthly: ₹${fund.monthlyContribution.toStringAsFixed(2)}', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-                                      ],
-                                    ),
-                                    trailing: Wrap(spacing: 4, children: [
-                                      IconButton(
-                                        icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
-                                        tooltip: 'Edit in Savings',
-                                        onPressed: () {
-                                          TabSwitcher.of(context)?.switchTo(2);
-                                        },
-                                      ),
-                                    ]),
-                                  ),
-                                )),
-                        ]),
+                        ],
+                      ),
                     ),
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ),
-          ),
-        ],
-      );
+            ],
+          );
         },
       ),
     );
@@ -1066,7 +1542,6 @@ class _BudgetPageState extends State<BudgetPage> {
       ),
     );
   }
-
 }
 
 class _SummaryStat extends StatelessWidget {
@@ -1098,4 +1573,3 @@ class _SummaryStat extends StatelessWidget {
     );
   }
 }
-
