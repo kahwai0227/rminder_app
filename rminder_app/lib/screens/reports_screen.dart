@@ -1288,10 +1288,7 @@ class _ReportingPageState extends State<ReportingPage>
                 const SizedBox(height: 6),
                 CompactItemCard(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 2,
-                    ),
+                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 2),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
