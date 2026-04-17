@@ -78,8 +78,7 @@ class _BudgetPageState extends State<BudgetPage> {
     return DateTime(now.year, now.month, now.day).add(const Duration(days: 1));
   }
 
-  // Compute extras beyond plan for debts and funds within the active period
-  double _extrasBeyondPlanForActivePeriod(AppState state) {
+  double _extraDebtPaymentsForActivePeriod(AppState state) {
     if (state.activePeriodStart == null) return 0.0;
     final ps = DateTime(
       state.activePeriodStart!.year,
@@ -87,37 +86,44 @@ class _BudgetPageState extends State<BudgetPage> {
       state.activePeriodStart!.day,
     );
     final pe = _activePeriodEndExclusive();
-    // Debt and fund category ids
-    final debtCatIds = state.liabilities.map((l) => l.budgetCategoryId).toSet();
-    final fundCatIds = state.sinkingFunds
-        .where((f) => f.budgetCategoryId != null)
-        .map((f) => f.budgetCategoryId!)
-        .toSet();
 
-    // Planned totals
-    final plannedDebt = state.liabilities
-        .where((l) => !l.isArchived)
-        .fold<double>(0.0, (s, l) => s + l.planned);
-    final plannedFunds = state.sinkingFunds.fold<double>(
-      0.0,
-      (s, f) => s + f.monthlyContribution,
-    );
-
-    // Actuals in period
-    double paidDebt = 0.0;
-    double contributedFunds = 0.0;
+    final paidByCategory = <int, double>{};
     for (final t in state.transactions) {
       if (!t.date.isBefore(ps) && t.date.isBefore(pe)) {
-        if (debtCatIds.contains(t.categoryId)) paidDebt += t.amount;
-        // Only count positive amounts as contributions (ignore withdrawals)
-        if (fundCatIds.contains(t.categoryId) && t.amount > 0)
-          contributedFunds += t.amount;
+        paidByCategory[t.categoryId] =
+            (paidByCategory[t.categoryId] ?? 0.0) + t.amount;
       }
     }
-    final extraDebt = paidDebt > plannedDebt ? (paidDebt - plannedDebt) : 0.0;
-    final extraFunds = contributedFunds > plannedFunds
-        ? (contributedFunds - plannedFunds)
-        : 0.0;
+
+    double extraDebt = 0.0;
+    for (final liab in state.liabilities.where((l) => !l.isArchived)) {
+      final paid = paidByCategory[liab.budgetCategoryId] ?? 0.0;
+      final over = paid - liab.planned;
+      if (over > 0) {
+        extraDebt += over;
+      }
+    }
+    return extraDebt;
+  }
+
+  double _extraFundContributionsForActivePeriod(AppState state) {
+    double extraFunds = 0.0;
+    for (final fund in state.sinkingFunds) {
+      final fundId = fund.id;
+      if (fundId == null) continue;
+      final contributed = state.contributedToFundsThisMonth[fundId] ?? 0.0;
+      final over = contributed - fund.monthlyContribution;
+      if (over > 0) {
+        extraFunds += over;
+      }
+    }
+    return extraFunds;
+  }
+
+  // Compute extras beyond plan for debts and funds within the active period
+  double _extrasBeyondPlanForActivePeriod(AppState state) {
+    final extraDebt = _extraDebtPaymentsForActivePeriod(state);
+    final extraFunds = _extraFundContributionsForActivePeriod(state);
     final extras = extraDebt + extraFunds;
     return extras > 0 ? extras : 0.0;
   }
@@ -1439,6 +1445,27 @@ class _BudgetPageState extends State<BudgetPage> {
         ),
       ),
     );
+    final spendingCategoryBudget = metrics.planned;
+    final plannedDebt = appState.liabilities
+        .where((l) => !l.isArchived)
+        .fold<double>(0.0, (sum, l) => sum + l.planned);
+    final plannedFunds = appState.sinkingFunds.fold<double>(
+      0.0,
+      (sum, f) => sum + f.monthlyContribution,
+    );
+
+    final extraDebtPayments = _extraDebtPaymentsForActivePeriod(appState);
+    final extraFundContributions = _extraFundContributionsForActivePeriod(
+      appState,
+    );
+
+    final plannedAmount =
+        spendingCategoryBudget +
+        plannedDebt +
+        plannedFunds +
+        extraDebtPayments +
+        extraFundContributions;
+    final unplannedAmount = totalInc - plannedAmount;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
@@ -1503,22 +1530,34 @@ class _BudgetPageState extends State<BudgetPage> {
               ),
               const SizedBox(height: 12),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _SummaryStat(
-                    title: 'Planned',
-                    amount: metrics.planned,
-                    color: theme.colorScheme.primary,
+                  Expanded(
+                    child: _SummaryStat(
+                      title: 'Planned',
+                      amount: plannedAmount,
+                      color: theme.colorScheme.primary,
+                    ),
                   ),
-                  _SummaryStat(
-                    title: 'Spent',
-                    amount: metrics.spent,
-                    color: theme.colorScheme.error,
+                  Expanded(
+                    child: _SummaryStat(
+                      title: 'Unplanned',
+                      amount: unplannedAmount,
+                      color: theme.colorScheme.secondary,
+                    ),
                   ),
-                  _SummaryStat(
-                    title: 'Remaining',
-                    amount: metrics.remaining,
-                    color: theme.colorScheme.tertiary,
+                  Expanded(
+                    child: _SummaryStat(
+                      title: 'Spent',
+                      amount: metrics.spent,
+                      color: theme.colorScheme.error,
+                    ),
+                  ),
+                  Expanded(
+                    child: _SummaryStat(
+                      title: 'Remaining',
+                      amount: spendingCategoryBudget,
+                      color: theme.colorScheme.tertiary,
+                    ),
                   ),
                 ],
               ),

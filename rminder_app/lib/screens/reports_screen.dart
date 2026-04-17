@@ -35,13 +35,14 @@ class _OverviewStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final displayAmount = amount.abs() < 0.005 ? 0.0 : amount;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Text(title, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 4),
         Text(
-          '₹${amount.toStringAsFixed(2)}',
+          '₹${displayAmount.toStringAsFixed(2)}',
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
             color: color,
             fontWeight: FontWeight.bold,
@@ -774,6 +775,9 @@ class _ReportingPageState extends State<ReportingPage>
       maxPeriods: 10,
     );
     final theme = Theme.of(context);
+    final plannedAmount = totalBudget + extraDebt + extraFunds;
+    final unplannedAmount = periodIncome - plannedAmount;
+    final remainingAmount = baseCategoryBudget;
 
     return Scaffold(
       appBar: AppBar(
@@ -994,22 +998,34 @@ class _ReportingPageState extends State<ReportingPage>
                         ),
                         const SizedBox(height: 12),
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
                           children: [
-                            _OverviewStat(
-                              title: 'Planned',
-                              amount: overviewMetrics.planned,
-                              color: theme.colorScheme.primary,
+                            Expanded(
+                              child: _OverviewStat(
+                                title: 'Planned',
+                                amount: plannedAmount,
+                                color: theme.colorScheme.primary,
+                              ),
                             ),
-                            _OverviewStat(
-                              title: 'Spent',
-                              amount: overviewMetrics.spent,
-                              color: theme.colorScheme.error,
+                            Expanded(
+                              child: _OverviewStat(
+                                title: 'Unplanned',
+                                amount: unplannedAmount,
+                                color: theme.colorScheme.secondary,
+                              ),
                             ),
-                            _OverviewStat(
-                              title: 'Remaining',
-                              amount: overviewMetrics.remaining,
-                              color: theme.colorScheme.tertiary,
+                            Expanded(
+                              child: _OverviewStat(
+                                title: 'Spent',
+                                amount: overviewMetrics.spent,
+                                color: theme.colorScheme.error,
+                              ),
+                            ),
+                            Expanded(
+                              child: _OverviewStat(
+                                title: 'Remaining',
+                                amount: remainingAmount,
+                                color: theme.colorScheme.tertiary,
+                              ),
                             ),
                           ],
                         ),
@@ -1130,7 +1146,8 @@ class _ReportingPageState extends State<ReportingPage>
                     itemBuilder: (context, index) {
                       final fund = sinkingFunds[index];
                       final contributed = _contributedThisMonthFor(fund);
-                      final delta = contributed - fund.monthlyContribution;
+                      final rawDelta = contributed - fund.monthlyContribution;
+                      final delta = rawDelta.abs() < 0.005 ? 0.0 : rawDelta;
                       final progress = fund.targetAmount <= 0
                           ? 0.0
                           : (fund.balance / fund.targetAmount).clamp(0.0, 1.0);

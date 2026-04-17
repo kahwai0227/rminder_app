@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.2] - 2026-04-17
+
+### Fixed
+- Savings page now calculates contributed amounts using the active-period transaction window, matching Reports behavior.
+- Savings contributions consistently count only positive fund transactions (withdrawals no longer affect contributed totals).
+- Budget page now computes extra fund contributions using per-fund positive deltas (matching Reports), preventing over/under netting across different funds.
+- Budget and Reports overview calculations now include extra debt payments above planned amounts in Planned and reduce Unplanned accordingly.
+- Reports normalizes near-zero values so metrics and deltas display `0.00` instead of `-0.00`.
+
+### Changed
+- Budget and Reports overview cards now display: Planned, Unplanned, Spent, and Remaining with aligned period totals.
+
 ## [1.5.1] - 2026-04-05
 
 ### Changed
