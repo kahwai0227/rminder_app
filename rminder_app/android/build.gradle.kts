@@ -5,6 +5,15 @@ allprojects {
     }
 }
 
+subprojects {
+    configurations.all {
+        resolutionStrategy {
+            force("androidx.glance:glance:1.1.1")
+            force("androidx.glance:glance-appwidget:1.1.1")
+        }
+    }
+}
+
 val newBuildDir: Directory =
     rootProject.layout.buildDirectory
         .dir("../../build")
