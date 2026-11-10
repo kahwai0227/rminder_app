@@ -129,4 +129,59 @@ void main() {
     expect(budgetOverview.spent, 220);
     expect(budgetOverview.remaining, 230);
   });
+
+  test('calculateZeroBasedBudgetSummary computes planned total and unallocated', () {
+    final summary = calculateZeroBasedBudgetSummary(
+      income: 2000,
+      baseCategoryBudget: 1000,
+      plannedDebt: 300,
+      plannedFunds: 200,
+      extraDebt: 100,
+      extraFunds: 50,
+    );
+
+    expect(summary.plannedTotal, 1650);
+    expect(summary.unallocated, 350);
+    expect(summary.isUnderAllocated, isTrue);
+    expect(summary.isBalanced, isFalse);
+    expect(summary.isOverAllocated, isFalse);
+  });
+
+  test('calculateZeroBasedBudgetSummary marks balanced within tolerance', () {
+    final summary = calculateZeroBasedBudgetSummary(
+      income: 1000,
+      baseCategoryBudget: 700,
+      plannedDebt: 200,
+      plannedFunds: 100.005,
+      extraDebt: 0,
+      extraFunds: 0,
+    );
+
+    expect(summary.unallocated, closeTo(-0.005, 0.0001));
+    expect(summary.isBalanced, isTrue);
+  });
+
+  test('requiresExplicitUnallocatedAcknowledgement applies only to close-only with leftover', () {
+    expect(
+      requiresExplicitUnallocatedAcknowledgement(
+        unallocated: 40,
+        closeOnlySelected: true,
+      ),
+      isTrue,
+    );
+    expect(
+      requiresExplicitUnallocatedAcknowledgement(
+        unallocated: 0,
+        closeOnlySelected: true,
+      ),
+      isFalse,
+    );
+    expect(
+      requiresExplicitUnallocatedAcknowledgement(
+        unallocated: 40,
+        closeOnlySelected: false,
+      ),
+      isFalse,
+    );
+  });
 }

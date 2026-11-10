@@ -748,6 +748,82 @@ class _BudgetPageState extends State<BudgetPage> {
     );
   }
 
+  Future<void> _applyPreviousPeriodTemplate() async {
+    final state = Provider.of<AppState>(context, listen: false);
+    final active = state.activePeriodStart;
+    if (active == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Active period is not ready yet.')),
+      );
+      return;
+    }
+    final closed = await RMinderDatabase.instance.getClosedMonthsWithClosedAt();
+    final candidates =
+        closed
+            .where(
+              (p) => p['closedAt'] != null && p['closedAt']!.isBefore(active),
+            )
+            .toList()
+          ..sort((a, b) => a['closedAt']!.compareTo(b['closedAt']!));
+    if (candidates.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No previous closed period found for template copy.'),
+        ),
+      );
+      return;
+    }
+
+    final templatePeriod = candidates.last['start']!;
+    final periodLabel =
+        '${templatePeriod.year}-${templatePeriod.month.toString().padLeft(2, '0')}-${templatePeriod.day.toString().padLeft(2, '0')}';
+    if (!mounted) return;
+    final shouldApply = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Copy previous period budget?'),
+        content: Text(
+          'This will copy budget categories and limits from $periodLabel into the current active budget.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Copy'),
+          ),
+        ],
+      ),
+    );
+    if (shouldApply != true) return;
+    if (!mounted) return;
+
+    var touched = 0;
+    await runGuardedMutation(
+      context: context,
+      failureMessage: 'Failed to copy budget template.',
+      action: () async {
+        touched = await RMinderDatabase.instance.applyBudgetTemplateFromPeriod(
+          templatePeriodStart: templatePeriod,
+          liabilities: state.liabilities,
+          sinkingFunds: state.sinkingFunds,
+        );
+      },
+      onSuccess: () async {
+        await state.refresh();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Copied $touched category budget(s) from template.'),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _showEditCategoryDialog(models.BudgetCategory category) async {
     final state = Provider.of<AppState>(context, listen: false);
     final nameController = TextEditingController(text: category.name);
@@ -991,31 +1067,14 @@ class _BudgetPageState extends State<BudgetPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(
-                                      'Income',
-                                      style: compactSectionTitleStyle(context),
-                                    ),
-                                    Row(
-                                      children: [
-                                        ElevatedButton.icon(
-                                          icon: const Icon(Icons.add),
-                                          label: const Text('Add'),
-                                          onPressed: _showAddIncomeSourceDialog,
-                                          style: ElevatedButton.styleFrom(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 8,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                      ],
-                                    ),
-                                  ],
+                                CompactSectionHeader(
+                                  title: 'Income',
+                                  subtitle: 'Manage recurring and carry income',
+                                  trailing: ElevatedButton.icon(
+                                    icon: const Icon(Icons.add),
+                                    label: const Text('Add'),
+                                    onPressed: _showAddIncomeSourceDialog,
+                                  ),
                                 ),
                                 const SizedBox(height: 10),
                                 if (_carryIncome > 0)
@@ -1060,8 +1119,11 @@ class _BudgetPageState extends State<BudgetPage> {
                                     ),
                                   ),
                                 incomeSources.isEmpty
-                                    ? const Center(
-                                        child: Text('No income sources yet.'),
+                                    ? const CompactEmptyState(
+                                        icon: Icons.payments_outlined,
+                                        title: 'No income sources yet',
+                                        message:
+                                            'Add at least one source to start allocating your budget.',
                                       )
                                     : Column(
                                         children: incomeSources
@@ -1126,40 +1188,39 @@ class _BudgetPageState extends State<BudgetPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(
-                                      'Budget',
-                                      style: compactSectionTitleStyle(context),
-                                    ),
-                                    ElevatedButton.icon(
-                                      icon: const Icon(Icons.add),
-                                      label: const Text('Add'),
-                                      onPressed: () {
-                                        if (totalInc == 0) {
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                'Please add your income before adding a budget category.',
-                                              ),
-                                            ),
-                                          );
-                                        } else {
-                                          _showAddCategoryDialog();
-                                        }
-                                      },
-                                      style: ElevatedButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 8,
-                                        ),
+                                CompactSectionHeader(
+                                  title: 'Budget',
+                                  subtitle: 'Expenses, liabilities and savings',
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      OutlinedButton.icon(
+                                        icon: const Icon(Icons.copy_all),
+                                        label: const Text('Copy Last'),
+                                        onPressed: _applyPreviousPeriodTemplate,
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(width: 8),
+                                      ElevatedButton.icon(
+                                        icon: const Icon(Icons.add),
+                                        label: const Text('Add'),
+                                        onPressed: () {
+                                          if (totalInc == 0) {
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Please add your income before adding a budget category.',
+                                                ),
+                                              ),
+                                            );
+                                          } else {
+                                            _showAddCategoryDialog();
+                                          }
+                                        },
+                                      ),
+                                    ],
+                                  ),
                                 ),
                                 const SizedBox(height: 10),
                                 Align(
@@ -1451,21 +1512,81 @@ class _BudgetPageState extends State<BudgetPage> {
         .fold<double>(0.0, (sum, l) => sum + l.planned);
     final plannedFunds = appState.sinkingFunds.fold<double>(
       0.0,
-      (sum, f) => sum + f.monthlyContribution,
+      (sum, f) {
+        final remainingToTarget = (f.targetAmount - f.balance).clamp(
+          0.0,
+          double.infinity,
+        );
+        final effectivePlan = f.monthlyContribution.clamp(
+          0.0,
+          remainingToTarget,
+        );
+        return sum + effectivePlan;
+      },
     );
 
     final extraDebtPayments = _extraDebtPaymentsForActivePeriod(appState);
     final extraFundContributions = _extraFundContributionsForActivePeriod(
       appState,
     );
+    final zeroBasedSummary = calculateZeroBasedBudgetSummary(
+      income: totalInc,
+      baseCategoryBudget: spendingCategoryBudget,
+      plannedDebt: plannedDebt,
+      plannedFunds: plannedFunds,
+      extraDebt: extraDebtPayments,
+      extraFunds: extraFundContributions,
+    );
+    final plannedAmount = zeroBasedSummary.plannedTotal;
+    final unplannedAmount = zeroBasedSummary.unallocated;
+    final unallocatedColor = zeroBasedSummary.isBalanced
+        ? theme.colorScheme.tertiary
+        : zeroBasedSummary.isUnderAllocated
+        ? theme.colorScheme.secondary
+        : theme.colorScheme.error;
 
-    final plannedAmount =
-        spendingCategoryBudget +
-        plannedDebt +
-        plannedFunds +
-        extraDebtPayments +
-        extraFundContributions;
-    final unplannedAmount = totalInc - plannedAmount;
+    final overageEntries = selection.categories
+        .where((c) {
+          final spent = selection.spentByCategory[c.id!] ?? 0.0;
+          return spent - c.budgetLimit > 0.01;
+        })
+        .map((c) {
+          final spent = selection.spentByCategory[c.id!] ?? 0.0;
+          return spent - c.budgetLimit;
+        })
+        .toList();
+    final overageTotal = overageEntries.fold<double>(0.0, (s, v) => s + v);
+
+    final fundShortfalls = appState.sinkingFunds
+        .map((f) {
+          final contributed = appState.contributedToFundsThisMonth[f.id] ?? 0.0;
+          final remainingToTarget = (f.targetAmount - f.balance).clamp(
+            0.0,
+            double.infinity,
+          );
+          final effectivePlan = f.monthlyContribution.clamp(
+            0.0,
+            remainingToTarget,
+          );
+          return effectivePlan - contributed;
+        })
+        .where((shortfall) => shortfall > 0.01)
+        .toList();
+    final totalFundShortfall = fundShortfalls.fold<double>(
+      0.0,
+      (s, v) => s + v,
+    );
+
+    final warnings = <String>[
+      if (zeroBasedSummary.isUnderAllocated)
+        '₹${zeroBasedSummary.unallocated.toStringAsFixed(2)} is still unallocated.',
+      if (zeroBasedSummary.isOverAllocated)
+        'Budget exceeds income by ₹${zeroBasedSummary.unallocated.abs().toStringAsFixed(2)}.',
+      if (overageEntries.isNotEmpty)
+        '${overageEntries.length} category overage(s), total ₹${overageTotal.toStringAsFixed(2)}.',
+      if (fundShortfalls.isNotEmpty)
+        '${fundShortfalls.length} savings goal shortfall(s), total ₹${totalFundShortfall.toStringAsFixed(2)}.',
+    ];
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
@@ -1540,9 +1661,9 @@ class _BudgetPageState extends State<BudgetPage> {
                   ),
                   Expanded(
                     child: _SummaryStat(
-                      title: 'Unplanned',
+                      title: 'Unallocated',
                       amount: unplannedAmount,
-                      color: theme.colorScheme.secondary,
+                      color: unallocatedColor,
                     ),
                   ),
                   Expanded(
@@ -1555,12 +1676,25 @@ class _BudgetPageState extends State<BudgetPage> {
                   Expanded(
                     child: _SummaryStat(
                       title: 'Remaining',
-                      amount: spendingCategoryBudget,
+                      amount: metrics.remaining,
                       color: theme.colorScheme.tertiary,
                     ),
                   ),
                 ],
               ),
+              if (warnings.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                ...warnings.map(
+                  (warning) => Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: CompactStateBanner(
+                      message: warning,
+                      icon: Icons.warning_amber_rounded,
+                      color: theme.colorScheme.error,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),

@@ -24,6 +24,62 @@ class OverviewMetrics {
   });
 }
 
+class ZeroBasedBudgetSummary {
+  final double income;
+  final double baseCategoryBudget;
+  final double plannedDebt;
+  final double plannedFunds;
+  final double extraDebt;
+  final double extraFunds;
+  final double plannedTotal;
+  final double unallocated;
+
+  const ZeroBasedBudgetSummary({
+    required this.income,
+    required this.baseCategoryBudget,
+    required this.plannedDebt,
+    required this.plannedFunds,
+    required this.extraDebt,
+    required this.extraFunds,
+    required this.plannedTotal,
+    required this.unallocated,
+  });
+
+  bool get isBalanced => unallocated.abs() <= 0.01;
+  bool get isUnderAllocated => unallocated > 0.01;
+  bool get isOverAllocated => unallocated < -0.01;
+}
+
+ZeroBasedBudgetSummary calculateZeroBasedBudgetSummary({
+  required double income,
+  required double baseCategoryBudget,
+  required double plannedDebt,
+  required double plannedFunds,
+  required double extraDebt,
+  required double extraFunds,
+}) {
+  final plannedTotal =
+      baseCategoryBudget + plannedDebt + plannedFunds + extraDebt + extraFunds;
+  final unallocated = income - plannedTotal;
+  return ZeroBasedBudgetSummary(
+    income: income,
+    baseCategoryBudget: baseCategoryBudget,
+    plannedDebt: plannedDebt,
+    plannedFunds: plannedFunds,
+    extraDebt: extraDebt,
+    extraFunds: extraFunds,
+    plannedTotal: plannedTotal,
+    unallocated: unallocated,
+  );
+}
+
+bool requiresExplicitUnallocatedAcknowledgement({
+  required double unallocated,
+  required bool closeOnlySelected,
+}) {
+  return closeOnlySelected && unallocated > 0.01;
+}
+
 OverviewMetrics calculateOverviewMetrics(Iterable<OverviewMetricItem> items) {
   final planned = items.fold<double>(0.0, (sum, item) => sum + item.planned);
   final spent = items.fold<double>(0.0, (sum, item) => sum + item.spent);

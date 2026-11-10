@@ -653,7 +653,11 @@ class _ReportingPageState extends State<ReportingPage>
       }
     } else {
       for (final fund in sinkingFunds) {
-        plannedFunds += fund.monthlyContribution;
+        final remainingToTarget = (fund.targetAmount - fund.balance).clamp(
+          0.0,
+          double.infinity,
+        );
+        plannedFunds += fund.monthlyContribution.clamp(0.0, remainingToTarget);
       }
     }
 
@@ -683,10 +687,15 @@ class _ReportingPageState extends State<ReportingPage>
       }
     }
 
-    // Totals per formula
-    final double totalBudget = baseCategoryBudget + plannedDebt + plannedFunds;
-    final double unallocated =
-        periodIncome - totalBudget - extraDebt - extraFunds;
+    final zeroBasedSummary = calculateZeroBasedBudgetSummary(
+      income: periodIncome,
+      baseCategoryBudget: baseCategoryBudget,
+      plannedDebt: plannedDebt,
+      plannedFunds: plannedFunds,
+      extraDebt: extraDebt,
+      extraFunds: extraFunds,
+    );
+    final double unallocated = zeroBasedSummary.unallocated;
 
     // Removed: Unspent amount (redundant)
 
@@ -770,14 +779,61 @@ class _ReportingPageState extends State<ReportingPage>
         (c) => OverviewMetricItem(planned: c.limit, spent: c.spent),
       ),
     );
+
+    final overageItems = spendingList
+        .where((c) => c.spent - c.limit > 0.01)
+        .map((c) => c.spent - c.limit)
+        .toList();
+    final overageTotal = overageItems.fold<double>(0.0, (s, v) => s + v);
+
+    final fundShortfalls = isClosed
+        ? (_fundSnapsByPeriod[DateTime(ps.year, ps.month, ps.day)] ?? const [])
+              .map((s) => s.monthlyContribution - s.contributed)
+              .where((shortfall) => shortfall > 0.01)
+              .toList()
+        : sinkingFunds
+              .map((f) {
+                final contributed = _contributedThisMonthFor(f);
+                final remainingToTarget = (f.targetAmount - f.balance).clamp(
+                  0.0,
+                  double.infinity,
+                );
+                final effectivePlan = f.monthlyContribution.clamp(
+                  0.0,
+                  remainingToTarget,
+                );
+                return effectivePlan - contributed;
+              })
+              .where((shortfall) => shortfall > 0.01)
+              .toList();
+    final fundShortfallTotal = fundShortfalls.fold<double>(
+      0.0,
+      (s, v) => s + v,
+    );
+    final theme = Theme.of(context);
+
+    final warnings = <String>[
+      if (zeroBasedSummary.isUnderAllocated)
+        '₹${zeroBasedSummary.unallocated.toStringAsFixed(2)} is still unallocated for this period.',
+      if (zeroBasedSummary.isOverAllocated)
+        'Budget exceeds income by ₹${zeroBasedSummary.unallocated.abs().toStringAsFixed(2)}.',
+      if (overageItems.isNotEmpty)
+        '${overageItems.length} category overage(s), total ₹${overageTotal.toStringAsFixed(2)}.',
+      if (fundShortfalls.isNotEmpty)
+        '${fundShortfalls.length} savings goal shortfall(s), total ₹${fundShortfallTotal.toStringAsFixed(2)}.',
+    ];
+    final unallocatedColor = zeroBasedSummary.isBalanced
+        ? theme.colorScheme.tertiary
+        : zeroBasedSummary.isUnderAllocated
+        ? theme.colorScheme.secondary
+        : theme.colorScheme.error;
     final comparisonHistory = _periodComparisonHistory(
       selectedStart: ps,
       maxPeriods: 10,
     );
-    final theme = Theme.of(context);
-    final plannedAmount = totalBudget + extraDebt + extraFunds;
-    final unplannedAmount = periodIncome - plannedAmount;
-    final remainingAmount = baseCategoryBudget;
+    final plannedAmount = zeroBasedSummary.plannedTotal;
+    final unplannedAmount = zeroBasedSummary.unallocated;
+    final remainingAmount = overviewMetrics.remaining;
 
     return Scaffold(
       appBar: AppBar(
@@ -798,6 +854,20 @@ class _ReportingPageState extends State<ReportingPage>
                 child: ListTile(
                   leading: Icon(Icons.notification_important),
                   title: Text('Enable notifications'),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'backup_export',
+                child: ListTile(
+                  leading: Icon(Icons.file_download),
+                  title: Text('Create local backup'),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'backup_restore_latest',
+                child: ListTile(
+                  leading: Icon(Icons.restore),
+                  title: Text('Restore latest backup'),
                 ),
               ),
               if (isClosed)
@@ -867,6 +937,12 @@ class _ReportingPageState extends State<ReportingPage>
                       ),
                     );
                   }
+                  break;
+                case 'backup_export':
+                  await _createLocalBackupFlow();
+                  break;
+                case 'backup_restore_latest':
+                  await _restoreLatestBackupFlow();
                   break;
                 case 'edit_budget':
                   await _editBudgetForPeriodFlow();
@@ -1008,9 +1084,9 @@ class _ReportingPageState extends State<ReportingPage>
                             ),
                             Expanded(
                               child: _OverviewStat(
-                                title: 'Unplanned',
+                                title: 'Unallocated',
                                 amount: unplannedAmount,
-                                color: theme.colorScheme.secondary,
+                                color: unallocatedColor,
                               ),
                             ),
                             Expanded(
@@ -1029,6 +1105,19 @@ class _ReportingPageState extends State<ReportingPage>
                             ),
                           ],
                         ),
+                        if (warnings.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          ...warnings.map(
+                            (warning) => Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: CompactStateBanner(
+                                message: warning,
+                                icon: Icons.warning_amber_rounded,
+                                color: theme.colorScheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 12),
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
@@ -1053,15 +1142,16 @@ class _ReportingPageState extends State<ReportingPage>
 
                 // Spending by Category
                 if (spendingList.isEmpty)
-                  const Center(
-                    child: Text(
-                      'No categories available. Add a category to view reports.',
-                    ),
+                  const CompactEmptyState(
+                    icon: Icons.pie_chart_outline_rounded,
+                    title: 'No reportable categories',
+                    message:
+                        'Add a budget category to unlock spending insights.',
                   )
                 else ...[
-                  Text(
-                    'Spending by Category',
-                    style: compactSectionTitleStyle(context),
+                  const CompactSectionHeader(
+                    title: 'Spending by Category',
+                    subtitle: 'Track progress against each category limit',
                   ),
                   const SizedBox(height: 6),
                   ListView.builder(
@@ -1134,9 +1224,9 @@ class _ReportingPageState extends State<ReportingPage>
 
                 // Savings contributions
                 if (sinkingFunds.isNotEmpty) ...[
-                  Text(
-                    'Savings Contributions',
-                    style: compactSectionTitleStyle(context),
+                  const CompactSectionHeader(
+                    title: 'Savings Contributions',
+                    subtitle: 'Monthly contribution progress per fund',
                   ),
                   const SizedBox(height: 6),
                   ListView.builder(
@@ -1223,9 +1313,9 @@ class _ReportingPageState extends State<ReportingPage>
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Text(
-                          'Debt Payments',
-                          style: compactSectionTitleStyle(context),
+                        const CompactSectionHeader(
+                          title: 'Debt Payments',
+                          subtitle: 'Minimum plan vs actual payments',
                         ),
                         ListView.builder(
                           shrinkWrap: true,
@@ -1923,7 +2013,12 @@ class _ReportingPageState extends State<ReportingPage>
             ),
             const SizedBox(height: 6),
             const Text('• Remove the closed status'),
-            const Text('• Delete budget snapshots (will use current budgets)'),
+            const Text(
+              '• Delete period snapshots (budget, income, spending, debt, savings)',
+            ),
+            const Text(
+              '• Remove carry-forward and category carryovers for the reopened transition',
+            ),
             const Text(
               '• Keep all transactions (carry-forward, debt payments, etc.)',
             ),
@@ -1985,6 +2080,70 @@ class _ReportingPageState extends State<ReportingPage>
           ),
         );
       }
+    }
+  }
+
+  Future<void> _createLocalBackupFlow() async {
+    try {
+      final path = await RMinderDatabase.instance.createLocalBackup();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Backup saved to: $path')));
+    } catch (e, st) {
+      logError(e, st);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to create local backup.')),
+      );
+    }
+  }
+
+  Future<void> _restoreLatestBackupFlow() async {
+    try {
+      final latest = await RMinderDatabase.instance.getLatestBackupPath();
+      if (latest == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('No local backup found.')));
+        return;
+      }
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Restore latest backup?'),
+          content: Text(
+            'This will replace current local data with backup:\n$latest',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Restore'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+
+      await RMinderDatabase.instance.restoreFromLocalBackup(latest);
+      await _appState.refresh();
+      await _loadData();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Local backup restored.')));
+    } catch (e, st) {
+      logError(e, st);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to restore local backup.')),
+      );
     }
   }
 

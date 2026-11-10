@@ -10,6 +10,13 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    configurations.all {
+        resolutionStrategy {
+            force("androidx.glance:glance:1.1.1")
+            force("androidx.glance:glance-appwidget:1.1.1")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11

@@ -285,21 +285,28 @@ class _LiabilitiesPageState extends State<LiabilitiesPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'Liability Accounts',
-                  style: compactSectionTitleStyle(context),
-                ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Liability'),
-                  onPressed: () => _addOrEditLiability(liabilitiesList),
+                Expanded(
+                  child: CompactSectionHeader(
+                    title: 'Liability Accounts',
+                    subtitle: '${liabilitiesList.length} account(s)',
+                    trailing: ElevatedButton.icon(
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Liability'),
+                      onPressed: () => _addOrEditLiability(liabilitiesList),
+                    ),
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: kCompactSectionGap),
             Expanded(
               child: liabilitiesList.isEmpty
-                  ? const Center(child: Text('No liabilities added yet.'))
+                  ? const CompactEmptyState(
+                      icon: Icons.account_balance_outlined,
+                      title: 'No liabilities added yet',
+                      message:
+                          'Add a liability to track minimum payments and balance progress.',
+                    )
                   : Scrollbar(
                       controller: _liabScroll,
                       thumbVisibility: true,

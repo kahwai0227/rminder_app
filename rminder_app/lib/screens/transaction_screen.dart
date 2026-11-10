@@ -128,6 +128,31 @@ class _TransactionsPageState extends State<TransactionsPage> {
     return ('-$symbol$v', false);
   }
 
+  (String label, Color color) _movementLabel(
+    BuildContext context,
+    AppState state,
+    models.Transaction t,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDebt = state.liabilities.any(
+      (l) => l.budgetCategoryId == t.categoryId,
+    );
+    if (isDebt) {
+      return (
+        t.amount >= 0 ? 'Debt payment' : 'Debt adjustment',
+        t.amount >= 0 ? scheme.primary : scheme.error,
+      );
+    }
+    final isSaving = _isSinkingFundCategory(state, t.categoryId);
+    if (isSaving) {
+      return (
+        t.amount >= 0 ? 'Savings contribution' : 'Savings withdrawal',
+        t.amount >= 0 ? scheme.tertiary : scheme.error,
+      );
+    }
+    return ('Expense', scheme.secondary);
+  }
+
   List<Widget> _buildGroupedTransactionWidgets(
     BuildContext context,
     AppState state,
@@ -178,6 +203,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
         (l) => l.budgetCategoryId == t.categoryId,
       );
       final isSaving = _isSinkingFundCategory(state, t.categoryId);
+      final (movementLabel, movementColor) = _movementLabel(context, state, t);
       IconData leadingIcon = Icons.shopping_bag;
       if (isDebt) {
         leadingIcon = Icons.savings;
@@ -227,6 +253,24 @@ class _TransactionsPageState extends State<TransactionsPage> {
                   ),
                 ],
               ),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: movementColor.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: movementColor.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Text(
+                  movementLabel,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: movementColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
               if (t.note != null && t.note!.trim().isNotEmpty) ...[
                 const SizedBox(height: 2),
                 Text(
@@ -247,6 +291,17 @@ class _TransactionsPageState extends State<TransactionsPage> {
     }
 
     return children;
+  }
+
+  int _activeFilterCount() {
+    var count = 0;
+    if (_filterCategory != null) count++;
+    if (_filterSingleDate != null) count++;
+    if (_filterStartDate != null || _filterEndDate != null) count++;
+    if (_filterMonthDate != null) count++;
+    if (_filterMinAmount != null || _filterMaxAmount != null) count++;
+    if (_hideDebt) count++;
+    return count;
   }
 
   Future<void> _showAddTransactionDialog(AppState state) async {
@@ -1168,33 +1223,53 @@ class _TransactionsPageState extends State<TransactionsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.filter_list),
-                        label: const Text('Filter'),
-                        onPressed: () => _showFilterDialog(appState),
-                      ),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add'),
-                        onPressed: appState.categories.isEmpty
-                            ? null
-                            : () => _showAddTransactionDialog(appState),
-                      ),
-                    ],
+                  CompactSectionHeader(
+                    title: 'Transactions',
+                    subtitle:
+                        '${filteredTxns.length} item(s) shown${_activeFilterCount() > 0 ? ' • ${_activeFilterCount()} active filter(s)' : ''}',
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.filter_list),
+                          label: const Text('Filter'),
+                          onPressed: () => _showFilterDialog(appState),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add'),
+                          onPressed: appState.categories.isEmpty
+                              ? null
+                              : () => _showAddTransactionDialog(appState),
+                        ),
+                      ],
+                    ),
                   ),
+                  if (_activeFilterCount() > 0) ...[
+                    const SizedBox(height: 4),
+                    CompactStateBanner(
+                      message:
+                          'Filters are active. Use Filter > Clear to reset the list.',
+                      icon: Icons.filter_alt_outlined,
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   Expanded(
                     child: appState.categories.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'No categories available. Add a category to begin.',
-                            ),
+                        ? const CompactEmptyState(
+                            icon: Icons.category_outlined,
+                            title: 'No categories available',
+                            message:
+                                'Create a budget category first, then add transactions.',
                           )
                         : filteredTxns.isEmpty
-                        ? const Center(child: Text('No transactions yet.'))
+                        ? const CompactEmptyState(
+                            icon: Icons.receipt_long_outlined,
+                            title: 'No matching transactions',
+                            message:
+                                'Try adjusting filters or add a new transaction.',
+                          )
                         : Scrollbar(
                             controller: _txScroll,
                             thumbVisibility: true,

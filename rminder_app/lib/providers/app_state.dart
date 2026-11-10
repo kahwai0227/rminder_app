@@ -7,6 +7,7 @@ import '../utils/logger.dart';
 class AppState extends ChangeNotifier {
   bool _isLoading = false;
   bool get isLoading => _isLoading;
+  Future<void>? _inFlightLoad;
 
   List<models.BudgetCategory> categories = [];
   List<models.Transaction> transactions = [];
@@ -18,7 +19,8 @@ class AppState extends ChangeNotifier {
   Map<int, double> get paidLiabilitiesThisMonth => _paidLiabilitiesThisMonth;
 
   final Map<int, double> _contributedToFundsThisMonth = {};
-  Map<int, double> get contributedToFundsThisMonth => _contributedToFundsThisMonth;
+  Map<int, double> get contributedToFundsThisMonth =>
+      _contributedToFundsThisMonth;
 
   DateTime? activePeriodStart;
 
@@ -27,13 +29,31 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> loadAllData() async {
+    if (_inFlightLoad != null) {
+      return _inFlightLoad!;
+    }
+    final future = _loadAllDataInternal();
+    _inFlightLoad = future;
+    try {
+      await future;
+    } finally {
+      _inFlightLoad = null;
+    }
+  }
+
+  Future<void> _loadAllDataInternal() async {
     _isLoading = true;
     notifyListeners();
 
     try {
       // First load active period
       await _loadActivePeriod();
-      
+      if (activePeriodStart != null) {
+        await RMinderDatabase.instance.applyPendingCategoryCarryoversForPeriod(
+          activePeriodStart!,
+        );
+      }
+
       await Future.wait([
         _loadCategories(),
         _loadTransactions(),
@@ -64,7 +84,8 @@ class AppState extends ChangeNotifier {
     _paidLiabilitiesThisMonth.clear();
     for (var l in liabilities) {
       if (l.id != null) {
-        _paidLiabilitiesThisMonth[l.id!] = await RMinderDatabase.instance.sumPaidForLiabilityInMonth(l.id!, activePeriodStart!);
+        _paidLiabilitiesThisMonth[l.id!] = await RMinderDatabase.instance
+            .sumPaidForLiabilityInMonth(l.id!, activePeriodStart!);
       }
     }
   }
@@ -78,7 +99,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _loadActivePeriod() async {
-    activePeriodStart = await RMinderDatabase.instance.getActivePeriodStart();  
+    activePeriodStart = await RMinderDatabase.instance.getActivePeriodStart();
   }
 
   DateTime _activePeriodEndExclusive() {

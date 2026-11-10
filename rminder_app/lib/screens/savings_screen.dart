@@ -219,9 +219,27 @@ class _SavingsScreenState extends State<SavingsScreen> {
     final fund = funds[index];
     final contributed = contribThisMonth[fund.id!] ?? 0.0;
     final appState = Provider.of<AppState>(context, listen: false);
-    final remainingPlan = (fund.monthlyContribution - contributed).clamp(
-      0,
+    final remainingToTarget = (fund.targetAmount - fund.balance).clamp(
+      0.0,
       double.infinity,
+    );
+    if (remainingToTarget <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Fund "${fund.name}" has already reached its target goal of \u20b9${fund.targetAmount.toStringAsFixed(2)}.',
+          ),
+        ),
+      );
+      return;
+    }
+    final effectiveMonthlyPlan = fund.monthlyContribution.clamp(
+      0.0,
+      remainingToTarget,
+    );
+    final remainingPlan = (effectiveMonthlyPlan - contributed).clamp(
+      0.0,
+      remainingToTarget,
     );
     final ctrl = TextEditingController(text: remainingPlan.toStringAsFixed(2));
     await showDialog(
@@ -232,6 +250,11 @@ class _SavingsScreenState extends State<SavingsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text(
+              'Remaining needed to target: \u20b9${remainingToTarget.toStringAsFixed(2)}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
             Text(
               'Remaining planned this month: \u20b9${remainingPlan.toStringAsFixed(2)}',
             ),
@@ -261,6 +284,16 @@ class _SavingsScreenState extends State<SavingsScreen> {
               if (amt <= 0) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Enter a valid amount.')),
+                );
+                return;
+              }
+              if (amt > remainingToTarget) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Amount exceeds remaining target of \u20b9${remainingToTarget.toStringAsFixed(2)}.',
+                    ),
+                  ),
                 );
                 return;
               }
@@ -382,18 +415,28 @@ class _SavingsScreenState extends State<SavingsScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Savings Funds', style: compactSectionTitleStyle(context)),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Fund'),
-                  onPressed: () => _addOrEditFund(funds),
+                Expanded(
+                  child: CompactSectionHeader(
+                    title: 'Savings Funds',
+                    subtitle: '${funds.length} fund(s)',
+                    trailing: ElevatedButton.icon(
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Fund'),
+                      onPressed: () => _addOrEditFund(funds),
+                    ),
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: kCompactSectionGap),
             Expanded(
               child: funds.isEmpty
-                  ? const Center(child: Text('No funds yet.'))
+                  ? const CompactEmptyState(
+                      icon: Icons.savings_outlined,
+                      title: 'No savings funds yet',
+                      message:
+                          'Add a sinking fund to track progress toward a target.',
+                    )
                   : Scrollbar(
                       controller: _scroll,
                       thumbVisibility: true,
@@ -407,6 +450,11 @@ class _SavingsScreenState extends State<SavingsScreen> {
                               : (f.balance / f.targetAmount).clamp(0.0, 1.0);
                           final contributed =
                               contribThisMonth[f.id ?? -1] ?? 0.0;
+                          final remainingToTarget =
+                              (f.targetAmount - f.balance).clamp(
+                                0.0,
+                                double.infinity,
+                              );
                           return CompactItemCard(
                             margin: const EdgeInsets.only(bottom: 2),
                             child: Padding(
@@ -472,6 +520,18 @@ class _SavingsScreenState extends State<SavingsScreen> {
                                   Text(
                                     'Balance: ₹${f.balance.toStringAsFixed(2)} / Target: ₹${f.targetAmount.toStringAsFixed(2)}',
                                     style: theme.textTheme.bodyMedium,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    remainingToTarget <= 0
+                                        ? 'Goal Reached!'
+                                        : 'Remaining to Target: ₹${remainingToTarget.toStringAsFixed(2)}',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: remainingToTarget <= 0
+                                          ? theme.colorScheme.tertiary
+                                          : theme.colorScheme.primary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                   const SizedBox(height: 6),
                                   LinearProgressIndicator(value: progress),

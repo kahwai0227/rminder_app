@@ -53,7 +53,8 @@ FutureOr<void> homeWidgetBackgroundCallback(Uri? data) async {
       switch (action) {
         case 'cat_toggle':
           {
-            final vis = await HomeWidget.getWidgetData<int>('cat_list_visible') ?? 0;
+            final vis =
+                await HomeWidget.getWidgetData<int>('cat_list_visible') ?? 0;
             final next = vis == 1 ? 0 : 1;
             await HomeWidget.saveWidgetData<int>('cat_list_visible', next);
             if (next == 1) {
@@ -76,10 +77,13 @@ FutureOr<void> homeWidgetBackgroundCallback(Uri? data) async {
         case 'cat_prev':
         case 'cat_next':
           {
-            final jsonStr = await HomeWidget.getWidgetData<String>('categories_json');
+            final jsonStr = await HomeWidget.getWidgetData<String>(
+              'categories_json',
+            );
             final categories = _parseCategories(jsonStr);
             if (categories.isNotEmpty) {
-              final current = await HomeWidget.getWidgetData<int>('cat_index') ?? 0;
+              final current =
+                  await HomeWidget.getWidgetData<int>('cat_index') ?? 0;
               final next = action == 'cat_prev'
                   ? (current - 1 + categories.length) % categories.length
                   : (current + 1) % categories.length;
@@ -91,14 +95,17 @@ FutureOr<void> homeWidgetBackgroundCallback(Uri? data) async {
         case 'key':
           {
             final v = data.queryParameters['value'] ?? '';
-            var digits = await HomeWidget.getWidgetData<String>('amount_digits') ?? '';
+            var digits =
+                await HomeWidget.getWidgetData<String>('amount_digits') ?? '';
             if (v == '00') {
               if (digits.length < 9) {
                 final remaining = 9 - digits.length;
                 final toAdd = remaining >= 2 ? '00' : '0';
                 digits = digits + toAdd;
               }
-            } else if (v.length == 1 && v.codeUnitAt(0) >= 48 && v.codeUnitAt(0) <= 57) {
+            } else if (v.length == 1 &&
+                v.codeUnitAt(0) >= 48 &&
+                v.codeUnitAt(0) <= 57) {
               // Single digit
               if (digits.length < 9) {
                 digits = digits + v;
@@ -117,7 +124,8 @@ FutureOr<void> homeWidgetBackgroundCallback(Uri? data) async {
           break;
         case 'backspace':
           {
-            var digits = await HomeWidget.getWidgetData<String>('amount_digits') ?? '';
+            var digits =
+                await HomeWidget.getWidgetData<String>('amount_digits') ?? '';
             if (digits.isNotEmpty) {
               digits = digits.substring(0, digits.length - 1);
             }
@@ -130,15 +138,19 @@ FutureOr<void> homeWidgetBackgroundCallback(Uri? data) async {
         case 'save':
           {
             // Compose values from stored state
-            final jsonStr = await HomeWidget.getWidgetData<String>('categories_json');
+            final jsonStr = await HomeWidget.getWidgetData<String>(
+              'categories_json',
+            );
             final categories = _parseCategories(jsonStr);
             if (categories.isEmpty) {
               await HomeWidget.updateWidget(name: 'QuickAddWidgetProvider');
               break;
             }
-            final catIndex = await HomeWidget.getWidgetData<int>('cat_index') ?? 0;
+            final catIndex =
+                await HomeWidget.getWidgetData<int>('cat_index') ?? 0;
             final cat = categories[catIndex % categories.length];
-            final digits = await HomeWidget.getWidgetData<String>('amount_digits') ?? '';
+            final digits =
+                await HomeWidget.getWidgetData<String>('amount_digits') ?? '';
             final amount = _amountFromDigits(digits) ?? 0.0;
             if (amount > 0) {
               final txn = models.Transaction(
@@ -193,7 +205,9 @@ void main() {
 Future<void> _registerHomeWidgetCallbackWithRetry({int attempts = 3}) async {
   for (int i = 0; i < attempts; i++) {
     try {
-      await HomeWidget.registerInteractivityCallback(homeWidgetBackgroundCallback);
+      await HomeWidget.registerInteractivityCallback(
+        homeWidgetBackgroundCallback,
+      );
       return;
     } catch (e) {
       // MissingPluginException can happen very early; retry a couple times.
@@ -246,9 +260,7 @@ Future<void> syncWidgetCategories() async {
   try {
     final db = RMinderDatabase.instance;
     final categories = await db.getCategories();
-  final mapped = categories
-    .map((c) => {'id': c.id, 'name': c.name})
-        .toList();
+    final mapped = categories.map((c) => {'id': c.id, 'name': c.name}).toList();
     final jsonStr = json.encode(mapped);
     await HomeWidget.saveWidgetData<String>('categories_json', jsonStr);
     await HomeWidget.saveWidgetData<int>('cat_list_visible', 0);
@@ -276,60 +288,111 @@ class MyApp extends StatelessWidget {
           useMaterial3: true,
           colorScheme: scheme,
           scaffoldBackgroundColor: const Color(0xFFF4F7F9),
-          visualDensity: VisualDensity.compact,
+          visualDensity: VisualDensity.standard,
+          materialTapTargetSize: MaterialTapTargetSize.padded,
+          splashFactory: InkRipple.splashFactory,
+          textTheme: const TextTheme(
+            titleLarge: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            bodyMedium: TextStyle(fontSize: 14),
+            bodySmall: TextStyle(fontSize: 12),
+            labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
           appBarTheme: AppBarTheme(
             backgroundColor: scheme.surface,
             foregroundColor: scheme.onSurface,
             scrolledUnderElevation: 0,
-            toolbarHeight: 48,
+            toolbarHeight: 52,
             titleSpacing: 12,
+            centerTitle: false,
+            titleTextStyle: TextStyle(
+              color: scheme.onSurface,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           cardTheme: CardThemeData(
-            elevation: 1.5,
-            margin: const EdgeInsets.symmetric(vertical: 4),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 1.25,
+            margin: const EdgeInsets.symmetric(vertical: 6),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
             surfaceTintColor: Colors.transparent,
             clipBehavior: Clip.antiAlias,
           ),
           listTileTheme: const ListTileThemeData(
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            dense: false,
+            visualDensity: VisualDensity.standard,
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           ),
           inputDecorationTheme: InputDecorationTheme(
-            isDense: true,
+            isDense: false,
             filled: true,
             fillColor: Colors.white,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 12,
+            ),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide(color: scheme.outline.withValues(alpha: 0.4)),
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(
+                color: scheme.outline.withValues(alpha: 0.4),
+              ),
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide(color: scheme.primary, width: 1.5),
             ),
           ),
           elevatedButtonTheme: ElevatedButtonThemeData(
             style: ElevatedButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              visualDensity: VisualDensity.standard,
+              minimumSize: const Size(48, 42),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
           ),
           outlinedButtonTheme: OutlinedButtonThemeData(
             style: OutlinedButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              visualDensity: VisualDensity.standard,
+              minimumSize: const Size(48, 42),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
           ),
           textButtonTheme: TextButtonThemeData(
             style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              visualDensity: VisualDensity.standard,
+              minimumSize: const Size(40, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             ),
+          ),
+          dividerTheme: DividerThemeData(
+            thickness: 0.8,
+            color: scheme.outlineVariant,
+            space: 16,
+          ),
+          snackBarTheme: SnackBarThemeData(
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            showCloseIcon: true,
+          ),
+          chipTheme: ChipThemeData(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+            side: BorderSide(color: scheme.outline.withValues(alpha: 0.35)),
+            labelStyle: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          progressIndicatorTheme: ProgressIndicatorThemeData(
+            borderRadius: BorderRadius.circular(999),
           ),
           bottomNavigationBarTheme: BottomNavigationBarThemeData(
             type: BottomNavigationBarType.fixed,
@@ -337,7 +400,10 @@ class MyApp extends StatelessWidget {
             unselectedItemColor: scheme.onSurfaceVariant,
             selectedIconTheme: IconThemeData(color: scheme.primary),
             unselectedIconTheme: IconThemeData(color: scheme.onSurfaceVariant),
-            selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+            selectedLabelStyle: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
             unselectedLabelStyle: const TextStyle(fontSize: 12),
             elevation: 8,
           ),
@@ -358,9 +424,11 @@ Future<void> setQuickAddCategory({required int categoryId}) async {
 class TabSwitcher extends InheritedWidget {
   final void Function(int index) switchTo;
   const TabSwitcher({required this.switchTo, required super.child, super.key});
-  static TabSwitcher? of(BuildContext context) => context.dependOnInheritedWidgetOfExactType<TabSwitcher>();
+  static TabSwitcher? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<TabSwitcher>();
   @override
-  bool updateShouldNotify(covariant TabSwitcher oldWidget) => switchTo != oldWidget.switchTo;
+  bool updateShouldNotify(covariant TabSwitcher oldWidget) =>
+      switchTo != oldWidget.switchTo;
 }
 
 class MainScreen extends StatefulWidget {
@@ -390,7 +458,9 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _maybeShowFirstRunGuide() async {
     try {
-      final shown = await RMinderDatabase.instance.getSetting('user_guide_shown');
+      final shown = await RMinderDatabase.instance.getSetting(
+        'user_guide_shown',
+      );
       if (shown != '1') {
         if (!mounted) return;
         await showUserGuide(context);
@@ -402,19 +472,35 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     return TabSwitcher(
-      switchTo: (i) => setState(() => _selectedIndex = i.clamp(0, _pages.length - 1)),
+      switchTo: (i) =>
+          setState(() => _selectedIndex = i.clamp(0, _pages.length - 1)),
       child: Scaffold(
-  body: SafeArea(child: _pages[_selectedIndex]),
+        body: SafeArea(child: _pages[_selectedIndex]),
         bottomNavigationBar: BottomNavigationBar(
           currentIndex: _selectedIndex,
           onTap: (i) => setState(() => _selectedIndex = i),
           iconSize: 20,
           items: const [
-            BottomNavigationBarItem(icon: Icon(Icons.account_balance_wallet), label: 'Budget'),
-            BottomNavigationBarItem(icon: Icon(Icons.list), label: 'Transactions'),
-            BottomNavigationBarItem(icon: Icon(Icons.attach_money), label: 'Savings'),
-            BottomNavigationBarItem(icon: Icon(Icons.savings), label: 'Liabilities'),
-            BottomNavigationBarItem(icon: Icon(Icons.pie_chart), label: 'Report'),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.account_balance_wallet),
+              label: 'Budget',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.list),
+              label: 'Transactions',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.attach_money),
+              label: 'Savings',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.savings),
+              label: 'Liabilities',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.pie_chart),
+              label: 'Report',
+            ),
           ],
         ),
       ),
@@ -448,7 +534,8 @@ List<Widget> buildGlobalAppBarActions(BuildContext context) {
         if (value == 'close') {
           // Invoke close flow directly using root navigator context to ensure the dialog appears
           // regardless of the current page.
-          final rootCtx = NavigationService.instance.navigatorKey.currentContext ?? context;
+          final rootCtx =
+              NavigationService.instance.navigatorKey.currentContext ?? context;
           await PeriodService.closeActivePeriod(rootCtx);
         } else if (value == 'guide') {
           // Open the user guide dialog

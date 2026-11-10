@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/models.dart' as models;
@@ -19,7 +22,7 @@ class RMinderDatabase {
     final fullPath = join(dbDir, fileName);
     return await openDatabase(
       fullPath,
-      version: 13,
+      version: 14,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -104,7 +107,9 @@ class RMinderDatabase {
             UNIQUE(period_start, category_id)
           )
         ''');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_budget_snapshots_period ON budget_snapshots(period_start)');
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_budget_snapshots_period ON budget_snapshots(period_start)',
+        );
         await db.execute('''
           CREATE TABLE IF NOT EXISTS income_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,7 +118,9 @@ class RMinderDatabase {
             amount REAL NOT NULL
           )
         ''');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_income_snapshots_period ON income_snapshots(period_start)');
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_income_snapshots_period ON income_snapshots(period_start)',
+        );
         await db.execute('''
           CREATE TABLE IF NOT EXISTS spending_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,7 +131,9 @@ class RMinderDatabase {
             UNIQUE(period_start, category_id)
           )
         ''');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_spending_snapshots_period ON spending_snapshots(period_start)');
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_spending_snapshots_period ON spending_snapshots(period_start)',
+        );
         await db.execute('''
           CREATE TABLE IF NOT EXISTS liability_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,7 +146,9 @@ class RMinderDatabase {
             UNIQUE(period_start, liability_id)
           )
         ''');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_liability_snapshots_period ON liability_snapshots(period_start)');
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_liability_snapshots_period ON liability_snapshots(period_start)',
+        );
         await db.execute('''
           CREATE TABLE IF NOT EXISTS fund_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,7 +161,23 @@ class RMinderDatabase {
             UNIQUE(period_start, fund_id)
           )
         ''');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_fund_snapshots_period ON fund_snapshots(period_start)');
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_fund_snapshots_period ON fund_snapshots(period_start)',
+        );
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS category_carryovers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_start TEXT NOT NULL,
+            source_period_start TEXT NOT NULL,
+            category_id INTEGER,
+            category_name TEXT NOT NULL,
+            amount REAL NOT NULL,
+            is_applied INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_category_carryovers_period ON category_carryovers(period_start)',
+        );
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -229,11 +256,15 @@ class RMinderDatabase {
               UNIQUE(period_start, category_id)
             )
           ''');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_budget_snapshots_period ON budget_snapshots(period_start)');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_budget_snapshots_period ON budget_snapshots(period_start)',
+          );
         }
         if (oldVersion < 9) {
           // Add is_archived column to existing liabilities table
-          await db.execute('ALTER TABLE liabilities ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
+          await db.execute(
+            'ALTER TABLE liabilities ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0',
+          );
         }
         if (oldVersion < 10) {
           await db.execute('''
@@ -244,7 +275,9 @@ class RMinderDatabase {
               amount REAL NOT NULL
             )
           ''');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_income_snapshots_period ON income_snapshots(period_start)');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_income_snapshots_period ON income_snapshots(period_start)',
+          );
         }
         if (oldVersion < 11) {
           await db.execute('''
@@ -257,7 +290,9 @@ class RMinderDatabase {
               UNIQUE(period_start, category_id)
             )
           ''');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_spending_snapshots_period ON spending_snapshots(period_start)');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_spending_snapshots_period ON spending_snapshots(period_start)',
+          );
           await db.execute('''
             CREATE TABLE IF NOT EXISTS liability_snapshots (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -270,7 +305,9 @@ class RMinderDatabase {
               UNIQUE(period_start, liability_id)
             )
           ''');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_liability_snapshots_period ON liability_snapshots(period_start)');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_liability_snapshots_period ON liability_snapshots(period_start)',
+          );
           await db.execute('''
             CREATE TABLE IF NOT EXISTS fund_snapshots (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -283,10 +320,14 @@ class RMinderDatabase {
               UNIQUE(period_start, fund_id)
             )
           ''');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_fund_snapshots_period ON fund_snapshots(period_start)');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_fund_snapshots_period ON fund_snapshots(period_start)',
+          );
         }
         if (oldVersion < 12) {
-          await db.execute('ALTER TABLE categories ADD COLUMN in_budget INTEGER NOT NULL DEFAULT 1');
+          await db.execute(
+            'ALTER TABLE categories ADD COLUMN in_budget INTEGER NOT NULL DEFAULT 1',
+          );
         }
         if (oldVersion < 13) {
           // Recover missing categories from budget_snapshots
@@ -312,6 +353,22 @@ class RMinderDatabase {
             FROM transactions 
             WHERE categoryId NOT IN (SELECT id FROM categories)
           """);
+        }
+        if (oldVersion < 14) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS category_carryovers (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              period_start TEXT NOT NULL,
+              source_period_start TEXT NOT NULL,
+              category_id INTEGER,
+              category_name TEXT NOT NULL,
+              amount REAL NOT NULL,
+              is_applied INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_category_carryovers_period ON category_carryovers(period_start)',
+          );
         }
       },
     );
@@ -347,7 +404,11 @@ class RMinderDatabase {
   Future<void> deleteCategoryCascade(int categoryId) async {
     final db = await instance.database;
     await db.transaction((txn) async {
-      await txn.delete('transactions', where: 'categoryId = ?', whereArgs: [categoryId]);
+      await txn.delete(
+        'transactions',
+        where: 'categoryId = ?',
+        whereArgs: [categoryId],
+      );
       await txn.delete('categories', where: 'id = ?', whereArgs: [categoryId]);
     });
   }
@@ -359,9 +420,17 @@ class RMinderDatabase {
     await db.transaction((txnDb) async {
       insertedId = await txnDb.insert('transactions', txn.toMap());
       // If this category is linked to a liability, reduce its balance by txn.amount
-      await _adjustLiabilityBalanceForCategory(txnDb, txn.categoryId, -txn.amount);
+      await _adjustLiabilityBalanceForCategory(
+        txnDb,
+        txn.categoryId,
+        -txn.amount,
+      );
       // If this category is linked to a sinking fund, increase its balance by txn.amount
-      await _adjustSinkingFundBalanceForCategory(txnDb, txn.categoryId, txn.amount);
+      await _adjustSinkingFundBalanceForCategory(
+        txnDb,
+        txn.categoryId,
+        txn.amount,
+      );
       await _updateCategorySpent(txn.categoryId, txnDb);
     });
     return insertedId;
@@ -378,7 +447,11 @@ class RMinderDatabase {
     int rows = 0;
     await db.transaction((txnDb) async {
       // Load the existing transaction to compute adjustments
-      final prevList = await txnDb.query('transactions', where: 'id = ?', whereArgs: [txn.id]);
+      final prevList = await txnDb.query(
+        'transactions',
+        where: 'id = ?',
+        whereArgs: [txn.id],
+      );
       Map<String, Object?>? prev;
       if (prevList.isNotEmpty) prev = prevList.first;
 
@@ -395,18 +468,43 @@ class RMinderDatabase {
 
         if (prevCategoryId == txn.categoryId) {
           // Same category; net change is new - old
-          final delta = txn.amount - prevAmount; // positive means increased spend
-          await _adjustLiabilityBalanceForCategory(txnDb, txn.categoryId, -delta);
-          await _adjustSinkingFundBalanceForCategory(txnDb, txn.categoryId, delta);
+          final delta =
+              txn.amount - prevAmount; // positive means increased spend
+          await _adjustLiabilityBalanceForCategory(
+            txnDb,
+            txn.categoryId,
+            -delta,
+          );
+          await _adjustSinkingFundBalanceForCategory(
+            txnDb,
+            txn.categoryId,
+            delta,
+          );
           await _updateCategorySpent(txn.categoryId, txnDb);
         } else {
           // Different categories; revert old, apply new
-          await _adjustLiabilityBalanceForCategory(txnDb, prevCategoryId, prevAmount);
-          await _adjustSinkingFundBalanceForCategory(txnDb, prevCategoryId, -prevAmount);
+          await _adjustLiabilityBalanceForCategory(
+            txnDb,
+            prevCategoryId,
+            prevAmount,
+          );
+          await _adjustSinkingFundBalanceForCategory(
+            txnDb,
+            prevCategoryId,
+            -prevAmount,
+          );
           await _updateCategorySpent(prevCategoryId, txnDb);
 
-          await _adjustLiabilityBalanceForCategory(txnDb, txn.categoryId, -txn.amount);
-          await _adjustSinkingFundBalanceForCategory(txnDb, txn.categoryId, txn.amount);
+          await _adjustLiabilityBalanceForCategory(
+            txnDb,
+            txn.categoryId,
+            -txn.amount,
+          );
+          await _adjustSinkingFundBalanceForCategory(
+            txnDb,
+            txn.categoryId,
+            txn.amount,
+          );
           await _updateCategorySpent(txn.categoryId, txnDb);
         }
       } else {
@@ -422,7 +520,11 @@ class RMinderDatabase {
     int rows = 0;
     await db.transaction((txnDb) async {
       // Find the transaction to get its details
-      final txnList = await txnDb.query('transactions', where: 'id = ?', whereArgs: [id]);
+      final txnList = await txnDb.query(
+        'transactions',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
       int? categoryId;
       double? amount;
       if (txnList.isNotEmpty) {
@@ -430,10 +532,14 @@ class RMinderDatabase {
         categoryId = t['categoryId'] as int?;
         amount = (t['amount'] as num).toDouble();
       }
-      rows = await txnDb.delete('transactions', where: 'id = ?', whereArgs: [id]);
+      rows = await txnDb.delete(
+        'transactions',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
       if (categoryId != null && amount != null) {
         // Deleting a transaction should add back to liability balance if it was a payment
-  await _adjustLiabilityBalanceForCategory(txnDb, categoryId, amount);
+        await _adjustLiabilityBalanceForCategory(txnDb, categoryId, amount);
         // And subtract from sinking fund balance if it was a contribution
         await _adjustSinkingFundBalanceForCategory(txnDb, categoryId, -amount);
         await _updateCategorySpent(categoryId, txnDb);
@@ -444,14 +550,19 @@ class RMinderDatabase {
 
   Future<bool> hasTransactionsForCategory(int categoryId) async {
     final db = await instance.database;
-    final result = await db.query('transactions', where: 'categoryId = ?', whereArgs: [categoryId]);
+    final result = await db.query(
+      'transactions',
+      where: 'categoryId = ?',
+      whereArgs: [categoryId],
+    );
     return result.isNotEmpty;
   }
 
   Future<void> _updateCategorySpent(int categoryId, DatabaseExecutor db) async {
     // Sum all transactions for this category
     final result = await db.rawQuery(
-      'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?', [categoryId],
+      'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?',
+      [categoryId],
     );
     final total = (result.first['total'] ?? 0) as num;
     await db.update(
@@ -464,22 +575,44 @@ class RMinderDatabase {
 
   // Helper: Adjust liability balance by delta for a category if it maps to a liability.
   // delta < 0 reduces balance (payment). delta > 0 increases balance (undo payment).
-  Future<void> _adjustLiabilityBalanceForCategory(DatabaseExecutor db, int categoryId, double delta) async {
+  Future<void> _adjustLiabilityBalanceForCategory(
+    DatabaseExecutor db,
+    int categoryId,
+    double delta,
+  ) async {
     // Find the liability linked to this category
-    final liabs = await db.query('liabilities', where: 'budgetCategoryId = ?', whereArgs: [categoryId]);
+    final liabs = await db.query(
+      'liabilities',
+      where: 'budgetCategoryId = ?',
+      whereArgs: [categoryId],
+    );
     Map<String, Object?>? liab;
     if (liabs.isNotEmpty) {
       liab = liabs.first;
     } else {
       // Fallback: try to auto-link by name if a liability with the same name as the category exists
-      final cats = await db.query('categories', columns: ['name'], where: 'id = ?', whereArgs: [categoryId]);
+      final cats = await db.query(
+        'categories',
+        columns: ['name'],
+        where: 'id = ?',
+        whereArgs: [categoryId],
+      );
       if (cats.isNotEmpty) {
         final catName = cats.first['name'] as String;
-        final byName = await db.query('liabilities', where: 'name = ?', whereArgs: [catName]);
+        final byName = await db.query(
+          'liabilities',
+          where: 'name = ?',
+          whereArgs: [catName],
+        );
         if (byName.length == 1) {
           liab = byName.first;
           // Link this liability to the category for future operations
-          await db.update('liabilities', {'budgetCategoryId': categoryId}, where: 'id = ?', whereArgs: [liab['id']]);
+          await db.update(
+            'liabilities',
+            {'budgetCategoryId': categoryId},
+            where: 'id = ?',
+            whereArgs: [liab['id']],
+          );
         }
       }
     }
@@ -487,26 +620,53 @@ class RMinderDatabase {
     final current = (liab['balance'] as num).toDouble();
     double next = current + delta;
     if (next < 0) next = 0;
-    await db.update('liabilities', {'balance': next}, where: 'id = ?', whereArgs: [liab['id']]);
+    await db.update(
+      'liabilities',
+      {'balance': next},
+      where: 'id = ?',
+      whereArgs: [liab['id']],
+    );
   }
 
   // Helper: Adjust sinking fund balance by delta for a category if it maps to a sinking fund.
   // delta > 0 increases balance (contribution). delta < 0 decreases balance (undo).
-  Future<void> _adjustSinkingFundBalanceForCategory(DatabaseExecutor db, int categoryId, double delta) async {
+  Future<void> _adjustSinkingFundBalanceForCategory(
+    DatabaseExecutor db,
+    int categoryId,
+    double delta,
+  ) async {
     // Find the sinking fund linked to this category
-    final funds = await db.query('sinking_funds', where: 'budgetCategoryId = ?', whereArgs: [categoryId]);
+    final funds = await db.query(
+      'sinking_funds',
+      where: 'budgetCategoryId = ?',
+      whereArgs: [categoryId],
+    );
     Map<String, Object?>? fund;
     if (funds.isNotEmpty) {
       fund = funds.first;
     } else {
       // Fallback: try to auto-link by same name as category
-      final cats = await db.query('categories', columns: ['name'], where: 'id = ?', whereArgs: [categoryId]);
+      final cats = await db.query(
+        'categories',
+        columns: ['name'],
+        where: 'id = ?',
+        whereArgs: [categoryId],
+      );
       if (cats.isNotEmpty) {
         final catName = cats.first['name'] as String;
-        final byName = await db.query('sinking_funds', where: 'name = ?', whereArgs: [catName]);
+        final byName = await db.query(
+          'sinking_funds',
+          where: 'name = ?',
+          whereArgs: [catName],
+        );
         if (byName.length == 1) {
           fund = byName.first;
-          await db.update('sinking_funds', {'budgetCategoryId': categoryId}, where: 'id = ?', whereArgs: [fund['id']]);
+          await db.update(
+            'sinking_funds',
+            {'budgetCategoryId': categoryId},
+            where: 'id = ?',
+            whereArgs: [fund['id']],
+          );
         }
       }
     }
@@ -516,12 +676,21 @@ class RMinderDatabase {
     double next = current + delta;
     if (next < 0) next = 0;
     if (next > target) next = target;
-    await db.update('sinking_funds', {'balance': next}, where: 'id = ?', whereArgs: [fund['id']]);
+    await db.update(
+      'sinking_funds',
+      {'balance': next},
+      where: 'id = ?',
+      whereArgs: [fund['id']],
+    );
   }
 
   Future<void> deleteTransactionsForCategory(int categoryId) async {
     final db = await instance.database;
-    await db.delete('transactions', where: 'categoryId = ?', whereArgs: [categoryId]);
+    await db.delete(
+      'transactions',
+      where: 'categoryId = ?',
+      whereArgs: [categoryId],
+    );
   }
 
   // CRUD for IncomeSource
@@ -553,34 +722,49 @@ class RMinderDatabase {
   }
 
   // ---------------- Budget Snapshots ----------------
-  Future<void> saveBudgetSnapshotForPeriod(DateTime periodStart, List<models.BudgetCategory> categories) async {
+  Future<void> saveBudgetSnapshotForPeriod(
+    DateTime periodStart,
+    List<models.BudgetCategory> categories,
+  ) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
     await db.transaction((txn) async {
       for (final c in categories) {
         if (c.id == null) continue;
-        await txn.insert(
-          'budget_snapshots',
-          {
-            'period_start': ps,
-            'category_id': c.id,
-            'category_name': c.name,
-            'budget_limit': c.budgetLimit,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('budget_snapshots', {
+          'period_start': ps,
+          'category_id': c.id,
+          'category_name': c.name,
+          'budget_limit': c.budgetLimit,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }
 
-  Future<List<models.BudgetSnapshot>> getBudgetSnapshotsFor(DateTime periodStart) async {
+  Future<List<models.BudgetSnapshot>> getBudgetSnapshotsFor(
+    DateTime periodStart,
+  ) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
-    final rows = await db.query('budget_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
+    final rows = await db.query(
+      'budget_snapshots',
+      where: 'period_start = ?',
+      whereArgs: [ps],
+    );
     return rows.map((m) => models.BudgetSnapshot.fromMap(m)).toList();
   }
 
-  Future<Map<int, models.BudgetSnapshot>> getBudgetSnapshotMapFor(DateTime periodStart) async {
+  Future<Map<int, models.BudgetSnapshot>> getBudgetSnapshotMapFor(
+    DateTime periodStart,
+  ) async {
     final snaps = await getBudgetSnapshotsFor(periodStart);
     return {for (final s in snaps) s.categoryId: s};
   }
@@ -592,23 +776,28 @@ class RMinderDatabase {
     final closed = await getClosedMonths();
     final categories = await getCategories();
     for (final period in closed) {
-      final ps = DateTime(period.year, period.month, period.day).toIso8601String();
+      final ps = DateTime(
+        period.year,
+        period.month,
+        period.day,
+      ).toIso8601String();
       // Check if this period already has snapshots
-      final existing = await db.query('budget_snapshots', where: 'period_start = ?', whereArgs: [ps], limit: 1);
+      final existing = await db.query(
+        'budget_snapshots',
+        where: 'period_start = ?',
+        whereArgs: [ps],
+        limit: 1,
+      );
       if (existing.isNotEmpty) continue; // already has snapshots
       // Snapshot current categories for this period (best we can do for historical data)
       for (final c in categories) {
         if (c.id == null) continue;
-        await db.insert(
-          'budget_snapshots',
-          {
-            'period_start': ps,
-            'category_id': c.id,
-            'category_name': c.name,
-            'budget_limit': c.budgetLimit,
-          },
-          conflictAlgorithm: ConflictAlgorithm.ignore,
-        );
+        await db.insert('budget_snapshots', {
+          'period_start': ps,
+          'category_id': c.id,
+          'category_name': c.name,
+          'budget_limit': c.budgetLimit,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
     }
   }
@@ -629,7 +818,11 @@ class RMinderDatabase {
 
   Future<List<models.Liability>> getLiabilities() async {
     final db = await instance.database;
-    final result = await db.query('liabilities', where: 'is_archived = ?', whereArgs: [0]);
+    final result = await db.query(
+      'liabilities',
+      where: 'is_archived = ?',
+      whereArgs: [0],
+    );
     return result.map((m) => models.Liability.fromMap(m)).toList();
   }
 
@@ -640,23 +833,25 @@ class RMinderDatabase {
   }
 
   Future<int> updateLiability(models.Liability liability) async {
-  final db = await instance.database;
-  return await db.transaction((txn) async {
-    final result = await txn.update('liabilities', liability.toMap(), where: 'id = ?', whereArgs: [liability.id]);
-    // Keep the linked budget category aligned with the liability:
-    // - name updated to match liability name (so Transactions filter shows new name)
-    // - budget_limit updated to liability.planned
-    await txn.update(
-      'categories',
-      {
-        'name': liability.name,
-        'budget_limit': liability.planned,
-      },
-      where: 'id = ?',
-      whereArgs: [liability.budgetCategoryId],
-    );
-    return result;
-  });
+    final db = await instance.database;
+    return await db.transaction((txn) async {
+      final result = await txn.update(
+        'liabilities',
+        liability.toMap(),
+        where: 'id = ?',
+        whereArgs: [liability.id],
+      );
+      // Keep the linked budget category aligned with the liability:
+      // - name updated to match liability name (so Transactions filter shows new name)
+      // - budget_limit updated to liability.planned
+      await txn.update(
+        'categories',
+        {'name': liability.name, 'budget_limit': liability.planned},
+        where: 'id = ?',
+        whereArgs: [liability.budgetCategoryId],
+      );
+      return result;
+    });
   }
 
   Future<int> deleteLiability(int id) async {
@@ -669,24 +864,43 @@ class RMinderDatabase {
   Future<void> deleteLiabilityCascade(int liabilityId) async {
     final db = await instance.database;
     await db.transaction((txn) async {
-      final liabs = await txn.query('liabilities', where: 'id = ?', whereArgs: [liabilityId]);
+      final liabs = await txn.query(
+        'liabilities',
+        where: 'id = ?',
+        whereArgs: [liabilityId],
+      );
       if (liabs.isEmpty) return; // nothing to do
       final liab = liabs.first;
       final categoryId = liab['budgetCategoryId'] as int;
       // Delete transactions for the category
-      await txn.delete('transactions', where: 'categoryId = ?', whereArgs: [categoryId]);
+      await txn.delete(
+        'transactions',
+        where: 'categoryId = ?',
+        whereArgs: [categoryId],
+      );
       // Delete the category
       await txn.delete('categories', where: 'id = ?', whereArgs: [categoryId]);
       // Delete the liability
-      await txn.delete('liabilities', where: 'id = ?', whereArgs: [liabilityId]);
+      await txn.delete(
+        'liabilities',
+        where: 'id = ?',
+        whereArgs: [liabilityId],
+      );
     });
   }
 
   // Ensure a debt budget category exists for this liability name, returns category id
-  Future<int> ensureDebtCategory(String liabilityName, {double planned = 0}) async {
+  Future<int> ensureDebtCategory(
+    String liabilityName, {
+    double planned = 0,
+  }) async {
     final db = await instance.database;
     // Try find existing category with same name (or a prefixed naming convention)
-    final existing = await db.query('categories', where: 'name = ?', whereArgs: [liabilityName]);
+    final existing = await db.query(
+      'categories',
+      where: 'name = ?',
+      whereArgs: [liabilityName],
+    );
     if (existing.isNotEmpty) {
       return existing.first['id'] as int;
     }
@@ -704,9 +918,16 @@ class RMinderDatabase {
     final db = await instance.database;
     int txId = -1;
     await db.transaction((txn) async {
-      final newBalance = (liability.balance - amount) < 0 ? 0 : (liability.balance - amount);
+      final newBalance = (liability.balance - amount) < 0
+          ? 0
+          : (liability.balance - amount);
       // Update liability balance
-      await txn.update('liabilities', {'balance': newBalance}, where: 'id = ?', whereArgs: [liability.id]);
+      await txn.update(
+        'liabilities',
+        {'balance': newBalance},
+        where: 'id = ?',
+        whereArgs: [liability.id],
+      );
       // Log transaction
       final t = models.Transaction(
         categoryId: liability.budgetCategoryId,
@@ -717,10 +938,16 @@ class RMinderDatabase {
       txId = await txn.insert('transactions', t.toMap());
       // Update category spent
       final result = await txn.rawQuery(
-        'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?', [liability.budgetCategoryId],
+        'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?',
+        [liability.budgetCategoryId],
       );
       final total = (result.first['total'] ?? 0) as num;
-      await txn.update('categories', {'spent': total}, where: 'id = ?', whereArgs: [liability.budgetCategoryId]);
+      await txn.update(
+        'categories',
+        {'spent': total},
+        where: 'id = ?',
+        whereArgs: [liability.budgetCategoryId],
+      );
     });
     return txId;
   }
@@ -741,17 +968,19 @@ class RMinderDatabase {
     final db = await instance.database;
     // Perform updates in a single transaction to keep entities consistent
     return await db.transaction((txn) async {
-      final result = await txn.update('sinking_funds', fund.toMap(), where: 'id = ?', whereArgs: [fund.id]);
+      final result = await txn.update(
+        'sinking_funds',
+        fund.toMap(),
+        where: 'id = ?',
+        whereArgs: [fund.id],
+      );
       // Keep the linked budget category aligned:
       // - name matches the fund name (so filters show updated name)
       // - budget_limit matches monthly contribution
       if (fund.budgetCategoryId != null) {
         await txn.update(
           'categories',
-          {
-            'name': fund.name,
-            'budget_limit': fund.monthlyContribution,
-          },
+          {'name': fund.name, 'budget_limit': fund.monthlyContribution},
           where: 'id = ?',
           whereArgs: [fund.budgetCategoryId],
         );
@@ -763,22 +992,41 @@ class RMinderDatabase {
   Future<void> deleteSinkingFundCascade(int fundId) async {
     final db = await instance.database;
     await db.transaction((txn) async {
-      final funds = await txn.query('sinking_funds', where: 'id = ?', whereArgs: [fundId]);
+      final funds = await txn.query(
+        'sinking_funds',
+        where: 'id = ?',
+        whereArgs: [fundId],
+      );
       if (funds.isEmpty) return;
       final fund = funds.first;
       final categoryId = fund['budgetCategoryId'] as int?;
       if (categoryId != null) {
-        await txn.delete('transactions', where: 'categoryId = ?', whereArgs: [categoryId]);
-        await txn.delete('categories', where: 'id = ?', whereArgs: [categoryId]);
+        await txn.delete(
+          'transactions',
+          where: 'categoryId = ?',
+          whereArgs: [categoryId],
+        );
+        await txn.delete(
+          'categories',
+          where: 'id = ?',
+          whereArgs: [categoryId],
+        );
       }
       await txn.delete('sinking_funds', where: 'id = ?', whereArgs: [fundId]);
     });
   }
 
   // Ensure a savings budget category exists for this fund name, returns category id
-  Future<int> ensureSavingsCategory(String fundName, {double monthly = 0}) async {
+  Future<int> ensureSavingsCategory(
+    String fundName, {
+    double monthly = 0,
+  }) async {
     final db = await instance.database;
-    final existing = await db.query('categories', where: 'name = ?', whereArgs: [fundName]);
+    final existing = await db.query(
+      'categories',
+      where: 'name = ?',
+      whereArgs: [fundName],
+    );
     if (existing.isNotEmpty) {
       return existing.first['id'] as int;
     }
@@ -795,25 +1043,41 @@ class RMinderDatabase {
     final db = await instance.database;
     int txId = -1;
     await db.transaction((txn) async {
-      final newBalance = (fund.balance + amount);
-      // Update fund balance (clamped to target)
-      final target = fund.targetAmount;
-      final clamped = newBalance > target ? target : (newBalance < 0 ? 0 : newBalance);
-      await txn.update('sinking_funds', {'balance': clamped}, where: 'id = ?', whereArgs: [fund.id]);
+      final remainingToTarget = (fund.targetAmount - fund.balance).clamp(
+        0.0,
+        double.infinity,
+      );
+      final actualContribution =
+          amount > remainingToTarget ? remainingToTarget : amount;
+      if (actualContribution <= 0) return;
+
+      final newBalance = fund.balance + actualContribution;
+      await txn.update(
+        'sinking_funds',
+        {'balance': newBalance},
+        where: 'id = ?',
+        whereArgs: [fund.id],
+      );
       // Log transaction
       if (fund.budgetCategoryId != null) {
         final t = models.Transaction(
           categoryId: fund.budgetCategoryId!,
-          amount: amount,
+          amount: actualContribution,
           date: DateTime.now(),
         );
         txId = await txn.insert('transactions', t.toMap());
         // Update category spent
         final result = await txn.rawQuery(
-          'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?', [fund.budgetCategoryId],
+          'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?',
+          [fund.budgetCategoryId],
         );
         final total = (result.first['total'] ?? 0) as num;
-        await txn.update('categories', {'spent': total}, where: 'id = ?', whereArgs: [fund.budgetCategoryId]);
+        await txn.update(
+          'categories',
+          {'spent': total},
+          where: 'id = ?',
+          whereArgs: [fund.budgetCategoryId],
+        );
       }
     });
     return txId;
@@ -821,15 +1085,24 @@ class RMinderDatabase {
 
   // Spend from a sinking fund: decrease balance, log a negative transaction in the linked budget category, and update spent.
   // Returns the created transaction id (or -1 if no transaction written).
-  Future<int> spendFromFund(models.SinkingFund fund, double amount, {String? note}) async {
+  Future<int> spendFromFund(
+    models.SinkingFund fund,
+    double amount, {
+    String? note,
+  }) async {
     final db = await instance.database;
     int txId = -1;
     await db.transaction((txn) async {
       // Clamp withdrawal to available balance
-  final withdraw = (amount < 0 ? 0 : amount).toDouble();
+      final withdraw = (amount < 0 ? 0 : amount).toDouble();
       final newBalance = fund.balance - withdraw;
       final clamped = newBalance < 0 ? 0 : newBalance;
-      await txn.update('sinking_funds', {'balance': clamped}, where: 'id = ?', whereArgs: [fund.id]);
+      await txn.update(
+        'sinking_funds',
+        {'balance': clamped},
+        where: 'id = ?',
+        whereArgs: [fund.id],
+      );
       // Log transaction (negative amount) in linked category if present
       if (fund.budgetCategoryId != null) {
         final t = models.Transaction(
@@ -841,10 +1114,16 @@ class RMinderDatabase {
         txId = await txn.insert('transactions', t.toMap());
         // Update category spent to reflect new sum
         final result = await txn.rawQuery(
-          'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?', [fund.budgetCategoryId],
+          'SELECT SUM(amount) as total FROM transactions WHERE categoryId = ?',
+          [fund.budgetCategoryId],
         );
         final total = (result.first['total'] ?? 0) as num;
-        await txn.update('categories', {'spent': total}, where: 'id = ?', whereArgs: [fund.budgetCategoryId]);
+        await txn.update(
+          'categories',
+          {'spent': total},
+          where: 'id = ?',
+          whereArgs: [fund.budgetCategoryId],
+        );
       }
     });
     return txId;
@@ -852,11 +1131,19 @@ class RMinderDatabase {
 
   // Sum contributions recorded for a fund for a given month
   // Only counts positive amounts (contributions), ignores withdrawals (negative amounts)
-  Future<double> sumContributedForFundInMonth(int fundId, DateTime month) async {
+  Future<double> sumContributedForFundInMonth(
+    int fundId,
+    DateTime month,
+  ) async {
     final db = await instance.database;
     final start = DateTime(month.year, month.month, 1);
     final end = DateTime(month.year, month.month + 1, 1);
-    final funds = await db.query('sinking_funds', columns: ['budgetCategoryId'], where: 'id = ?', whereArgs: [fundId]);
+    final funds = await db.query(
+      'sinking_funds',
+      columns: ['budgetCategoryId'],
+      where: 'id = ?',
+      whereArgs: [fundId],
+    );
     if (funds.isEmpty) return 0;
     final catId = funds.first['budgetCategoryId'] as int?;
     if (catId == null) return 0;
@@ -885,12 +1172,20 @@ class RMinderDatabase {
   }
 
   // Sum of paid transactions for a liability for a given month
-  Future<double> sumPaidForLiabilityInMonth(int liabilityId, DateTime month) async {
+  Future<double> sumPaidForLiabilityInMonth(
+    int liabilityId,
+    DateTime month,
+  ) async {
     final db = await instance.database;
     final start = DateTime(month.year, month.month, 1);
     final end = DateTime(month.year, month.month + 1, 1);
     // Look up categoryId
-    final liabs = await db.query('liabilities', columns: ['budgetCategoryId'], where: 'id = ?', whereArgs: [liabilityId]);
+    final liabs = await db.query(
+      'liabilities',
+      columns: ['budgetCategoryId'],
+      where: 'id = ?',
+      whereArgs: [liabilityId],
+    );
     if (liabs.isEmpty) return 0;
     final catId = liabs.first['budgetCategoryId'] as int;
     final result = await db.rawQuery(
@@ -902,7 +1197,10 @@ class RMinderDatabase {
   }
 
   // Sum of extra payments recorded for a liability in a given month
-  Future<double> sumExtraForLiabilityInMonth(int liabilityId, DateTime month) async {
+  Future<double> sumExtraForLiabilityInMonth(
+    int liabilityId,
+    DateTime month,
+  ) async {
     final db = await instance.database;
     final start = DateTime(month.year, month.month, 1);
     final end = DateTime(month.year, month.month + 1, 1);
@@ -931,26 +1229,30 @@ class RMinderDatabase {
     required Map<int, double> contributedByFundId,
   }) async {
     final db = await instance.database;
-    final periodStartIso = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final periodStartIso = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
 
     await db.transaction((txn) async {
       // Snapshot budgets.
       for (final c in categories) {
         if (c.id == null) continue;
-        await txn.insert(
-          'budget_snapshots',
-          {
-            'period_start': periodStartIso,
-            'category_id': c.id,
-            'category_name': c.name,
-            'budget_limit': c.budgetLimit,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('budget_snapshots', {
+          'period_start': periodStartIso,
+          'category_id': c.id,
+          'category_name': c.name,
+          'budget_limit': c.budgetLimit,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
 
       // Snapshot incomes.
-      await txn.delete('income_snapshots', where: 'period_start = ?', whereArgs: [periodStartIso]);
+      await txn.delete(
+        'income_snapshots',
+        where: 'period_start = ?',
+        whereArgs: [periodStartIso],
+      );
       for (final source in incomeSources) {
         await txn.insert('income_snapshots', {
           'period_start': periodStartIso,
@@ -962,55 +1264,50 @@ class RMinderDatabase {
       // Snapshot spending by category.
       for (final c in categories) {
         if (c.id == null) continue;
-        await txn.insert(
-          'spending_snapshots',
-          {
-            'period_start': periodStartIso,
-            'category_id': c.id,
-            'category_name': c.name,
-            'spent': spentByCategory[c.id!] ?? 0.0,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('spending_snapshots', {
+          'period_start': periodStartIso,
+          'category_id': c.id,
+          'category_name': c.name,
+          'spent': spentByCategory[c.id!] ?? 0.0,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
 
       // Snapshot liabilities.
       for (final liab in liabilities) {
         if (liab.id == null) continue;
-        await txn.insert(
-          'liability_snapshots',
-          {
-            'period_start': periodStartIso,
-            'liability_id': liab.id,
-            'liability_name': liab.name,
-            'category_id': liab.budgetCategoryId,
-            'planned': liab.planned,
-            'paid': paidByLiabilityId[liab.id!] ?? 0.0,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('liability_snapshots', {
+          'period_start': periodStartIso,
+          'liability_id': liab.id,
+          'liability_name': liab.name,
+          'category_id': liab.budgetCategoryId,
+          'planned': liab.planned,
+          'paid': paidByLiabilityId[liab.id!] ?? 0.0,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
 
       // Snapshot funds.
       for (final fund in sinkingFunds) {
         if (fund.id == null) continue;
-        await txn.insert(
-          'fund_snapshots',
-          {
-            'period_start': periodStartIso,
-            'fund_id': fund.id,
-            'fund_name': fund.name,
-            'category_id': fund.budgetCategoryId,
-            'monthly_contribution': fund.monthlyContribution,
-            'contributed': contributedByFundId[fund.id!] ?? 0.0,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('fund_snapshots', {
+          'period_start': periodStartIso,
+          'fund_id': fund.id,
+          'fund_name': fund.name,
+          'category_id': fund.budgetCategoryId,
+          'monthly_contribution': fund.monthlyContribution,
+          'contributed': contributedByFundId[fund.id!] ?? 0.0,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
 
       // Auto-archive fully paid liabilities.
-      for (final liab in liabilities.where((l) => !l.isArchived && l.balance <= 0 && l.id != null)) {
-        await txn.update('liabilities', {'is_archived': 1}, where: 'id = ?', whereArgs: [liab.id]);
+      for (final liab in liabilities.where(
+        (l) => !l.isArchived && l.balance <= 0 && l.id != null,
+      )) {
+        await txn.update(
+          'liabilities',
+          {'is_archived': 1},
+          where: 'id = ?',
+          whereArgs: [liab.id],
+        );
       }
 
       if (action == 'carryIncome') {
@@ -1018,74 +1315,119 @@ class RMinderDatabase {
         final m = nextStart.month.toString().padLeft(2, '0');
         final d = nextStart.day.toString().padLeft(2, '0');
         final carryKey = 'carry_income:$y-$m-$d';
-        await txn.insert(
-          'settings',
-          {'key': carryKey, 'value': totalLeftover.toStringAsFixed(2)},
-          conflictAlgorithm: ConflictAlgorithm.replace,
+        await txn.insert('settings', {
+          'key': carryKey,
+          'value': totalLeftover.toStringAsFixed(2),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+
+      if (action == 'carryByCategory') {
+        final debtCategoryIds = liabilities
+            .where((l) => !l.isArchived)
+            .map((l) => l.budgetCategoryId)
+            .toSet();
+        final fundCategoryIds = sinkingFunds
+            .where((f) => f.budgetCategoryId != null)
+            .map((f) => f.budgetCategoryId!)
+            .toSet();
+        final excludedCategoryIds = {...debtCategoryIds, ...fundCategoryIds};
+        final nextPeriodIso = DateTime(
+          nextStart.year,
+          nextStart.month,
+          nextStart.day,
+        ).toIso8601String();
+        await txn.delete(
+          'category_carryovers',
+          where: 'period_start = ?',
+          whereArgs: [nextPeriodIso],
         );
+        for (final c in categories.where((x) => x.id != null && x.inBudget)) {
+          final categoryId = c.id!;
+          if (excludedCategoryIds.contains(categoryId)) continue;
+          final spent = spentByCategory[categoryId] ?? 0.0;
+          final amount = (c.budgetLimit - spent).clamp(0.0, double.infinity);
+          if (amount <= 0.01) continue;
+          await txn.insert('category_carryovers', {
+            'period_start': nextPeriodIso,
+            'source_period_start': periodStartIso,
+            'category_id': categoryId,
+            'category_name': c.name,
+            'amount': amount,
+            'is_applied': 0,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
       }
 
       if (action == 'payDebt' || action == 'contributeFund') {
         if (transferCategoryId == null) {
           throw ArgumentError('transferCategoryId is required for $action');
         }
-        await txn.insert(
-          'transactions',
-          {
-            'categoryId': transferCategoryId,
-            'amount': totalLeftover,
-            'date': closeAt.toIso8601String(),
-            'note': transferNote,
-          },
+        await txn.insert('transactions', {
+          'categoryId': transferCategoryId,
+          'amount': totalLeftover,
+          'date': closeAt.toIso8601String(),
+          'note': transferNote,
+        });
+        await _adjustLiabilityBalanceForCategory(
+          txn,
+          transferCategoryId,
+          -totalLeftover,
         );
-        await _adjustLiabilityBalanceForCategory(txn, transferCategoryId, -totalLeftover);
-        await _adjustSinkingFundBalanceForCategory(txn, transferCategoryId, totalLeftover);
+        await _adjustSinkingFundBalanceForCategory(
+          txn,
+          transferCategoryId,
+          totalLeftover,
+        );
         await _updateCategorySpent(transferCategoryId, txn);
       }
 
-      await txn.insert(
-        'closed_months',
-        {
-          'month_start': periodStartIso,
-          'closed_at': closeAt.toIso8601String(),
-          'action': action,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
+      await txn.insert('closed_months', {
+        'month_start': periodStartIso,
+        'closed_at': closeAt.toIso8601String(),
+        'action': action,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
 
-      await txn.insert(
-        'settings',
-        {'key': _activePeriodStartKey, 'value': nextStart.toIso8601String()},
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await txn.insert('settings', {
+        'key': _activePeriodStartKey,
+        'value': nextStart.toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     });
   }
 
   // Record that a month has been closed
   Future<int> insertClosedMonth({
-    required DateTime monthStart, 
+    required DateTime monthStart,
     required String action,
     DateTime? closedAt,
   }) async {
     final db = await instance.database;
     // Store the provided period start day (respect user-defined reset day)
-    final ms = DateTime(monthStart.year, monthStart.month, monthStart.day).toIso8601String();
+    final ms = DateTime(
+      monthStart.year,
+      monthStart.month,
+      monthStart.day,
+    ).toIso8601String();
     final closedAtTime = (closedAt ?? DateTime.now()).toIso8601String();
-    return await db.insert(
-      'closed_months',
-      {
-        'month_start': ms,
-        'closed_at': closedAtTime,
-        'action': action,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    return await db.insert('closed_months', {
+      'month_start': ms,
+      'closed_at': closedAtTime,
+      'action': action,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   Future<bool> isMonthClosed(DateTime monthStart) async {
     final db = await instance.database;
-    final ms = DateTime(monthStart.year, monthStart.month, monthStart.day).toIso8601String();
-    final rows = await db.query('closed_months', where: 'month_start = ?', whereArgs: [ms], limit: 1);
+    final ms = DateTime(
+      monthStart.year,
+      monthStart.month,
+      monthStart.day,
+    ).toIso8601String();
+    final rows = await db.query(
+      'closed_months',
+      where: 'month_start = ?',
+      whereArgs: [ms],
+      limit: 1,
+    );
     return rows.isNotEmpty;
   }
 
@@ -1103,7 +1445,10 @@ class RMinderDatabase {
   // Each map contains keys: 'start' (DateTime, date-only) and 'closedAt' (DateTime, with time).
   Future<List<Map<String, DateTime>>> getClosedMonthsWithClosedAt() async {
     final db = await instance.database;
-    final rows = await db.query('closed_months', columns: ['month_start', 'closed_at']);
+    final rows = await db.query(
+      'closed_months',
+      columns: ['month_start', 'closed_at'],
+    );
     final list = <Map<String, DateTime>>[];
     for (final r in rows) {
       try {
@@ -1125,21 +1470,91 @@ class RMinderDatabase {
   // Returns true if the period was reopened, false if it wasn't closed.
   Future<bool> reopenClosedPeriod(DateTime periodStart) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
-    
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
+
     return await db.transaction((txn) async {
       // Check if the period is actually closed
-      final existing = await txn.query('closed_months', where: 'month_start = ?', whereArgs: [ps], limit: 1);
+      final existing = await txn.query(
+        'closed_months',
+        where: 'month_start = ?',
+        whereArgs: [ps],
+        limit: 1,
+      );
       if (existing.isEmpty) return false; // Not closed, nothing to reopen
-      
+      DateTime? closedAt;
+      try {
+        closedAt = DateTime.parse(
+          (existing.first['closed_at'] as String?) ?? '',
+        );
+      } catch (_) {
+        closedAt = null;
+      }
+      String? carryIncomeKey;
+      String? nextPeriodIso;
+      if (closedAt != null) {
+        final y = closedAt.year.toString().padLeft(4, '0');
+        final m = closedAt.month.toString().padLeft(2, '0');
+        final d = closedAt.day.toString().padLeft(2, '0');
+        carryIncomeKey = 'carry_income:$y-$m-$d';
+        nextPeriodIso = DateTime(
+          closedAt.year,
+          closedAt.month,
+          closedAt.day,
+        ).toIso8601String();
+      }
+
       // Delete the closed_months entry
-      await txn.delete('closed_months', where: 'month_start = ?', whereArgs: [ps]);
-      
-      // Delete budget snapshots for this period (user will see current budgets until they close again)
-      await txn.delete('budget_snapshots', where: 'period_start = ?', whereArgs: [ps]);
-      // Delete income snapshots for this period (user will see current incomes until they close again)
-      await txn.delete('income_snapshots', where: 'period_start = ?', whereArgs: [ps]);
-      
+      await txn.delete(
+        'closed_months',
+        where: 'month_start = ?',
+        whereArgs: [ps],
+      );
+
+      // Delete snapshots for this period (user will see current/live values until they close again)
+      await txn.delete(
+        'budget_snapshots',
+        where: 'period_start = ?',
+        whereArgs: [ps],
+      );
+      await txn.delete(
+        'income_snapshots',
+        where: 'period_start = ?',
+        whereArgs: [ps],
+      );
+      await txn.delete(
+        'spending_snapshots',
+        where: 'period_start = ?',
+        whereArgs: [ps],
+      );
+      await txn.delete(
+        'liability_snapshots',
+        where: 'period_start = ?',
+        whereArgs: [ps],
+      );
+      await txn.delete(
+        'fund_snapshots',
+        where: 'period_start = ?',
+        whereArgs: [ps],
+      );
+      if (carryIncomeKey != null) {
+        await txn.delete(
+          'settings',
+          where: 'key = ?',
+          whereArgs: [carryIncomeKey],
+        );
+      }
+      if (nextPeriodIso != null) {
+        await txn.delete(
+          'category_carryovers',
+          where: 'period_start = ?',
+          whereArgs: [nextPeriodIso],
+        );
+      }
+
       return true;
     });
   }
@@ -1249,16 +1664,20 @@ class RMinderDatabase {
   // Settings helpers
   Future<void> setSetting(String key, String value) async {
     final db = await instance.database;
-    await db.insert(
-      'settings',
-      {'key': key, 'value': value},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('settings', {
+      'key': key,
+      'value': value,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<String?> getSetting(String key) async {
     final db = await instance.database;
-    final rows = await db.query('settings', where: 'key = ?', whereArgs: [key], limit: 1);
+    final rows = await db.query(
+      'settings',
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
     if (rows.isEmpty) return null;
     return rows.first['value'] as String;
   }
@@ -1284,13 +1703,319 @@ class RMinderDatabase {
     return parsed;
   }
 
-  // ---------------- Income Snapshots ----------------
-  Future<void> saveIncomeSnapshotForPeriod(DateTime periodStart, List<models.IncomeSource> sources) async {
+  Future<List<Map<String, dynamic>>> getCategoryCarryoversForPeriod(
+    DateTime periodStart, {
+    bool onlyPending = false,
+  }) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
+    return await db.query(
+      'category_carryovers',
+      where: onlyPending
+          ? 'period_start = ? AND is_applied = 0'
+          : 'period_start = ?',
+      whereArgs: [ps],
+      orderBy: 'category_name COLLATE NOCASE ASC',
+    );
+  }
+
+  Future<int> applyPendingCategoryCarryoversForPeriod(
+    DateTime periodStart,
+  ) async {
+    final db = await instance.database;
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
+    return await db.transaction((txn) async {
+      final rows = await txn.query(
+        'category_carryovers',
+        where: 'period_start = ? AND is_applied = 0',
+        whereArgs: [ps],
+      );
+      if (rows.isEmpty) return 0;
+
+      var applied = 0;
+      for (final row in rows) {
+        final id = row['id'] as int?;
+        if (id == null) continue;
+        final amount = ((row['amount'] ?? 0) as num).toDouble();
+        if (amount <= 0.01) {
+          await txn.update(
+            'category_carryovers',
+            {'is_applied': 1},
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+          continue;
+        }
+
+        int? categoryId = row['category_id'] as int?;
+        final categoryName = (row['category_name'] ?? 'Carried Category')
+            .toString();
+        final existing = categoryId == null
+            ? const <Map<String, Object?>>[]
+            : await txn.query(
+                'categories',
+                where: 'id = ?',
+                whereArgs: [categoryId],
+                limit: 1,
+              );
+        if (existing.isNotEmpty) {
+          final currentLimit = ((existing.first['budget_limit'] ?? 0) as num)
+              .toDouble();
+          await txn.update(
+            'categories',
+            {'budget_limit': currentLimit + amount, 'in_budget': 1},
+            where: 'id = ?',
+            whereArgs: [categoryId],
+          );
+        } else {
+          final insertedId = await txn.insert('categories', {
+            'name': categoryName,
+            'budget_limit': amount,
+            'spent': 0,
+            'in_budget': 1,
+          });
+          categoryId = insertedId;
+        }
+
+        await txn.update(
+          'category_carryovers',
+          {'is_applied': 1, 'category_id': categoryId},
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+        applied += 1;
+      }
+      return applied;
+    });
+  }
+
+  Future<int> applyBudgetTemplateFromPeriod({
+    required DateTime templatePeriodStart,
+    required List<models.Liability> liabilities,
+    required List<models.SinkingFund> sinkingFunds,
+  }) async {
+    final db = await instance.database;
+    final templateIso = DateTime(
+      templatePeriodStart.year,
+      templatePeriodStart.month,
+      templatePeriodStart.day,
+    ).toIso8601String();
+
+    return await db.transaction((txn) async {
+      final snapshots = await txn.query(
+        'budget_snapshots',
+        where: 'period_start = ?',
+        whereArgs: [templateIso],
+      );
+      if (snapshots.isEmpty) return 0;
+
+      final debtCategoryIds = liabilities
+          .where((l) => !l.isArchived)
+          .map((l) => l.budgetCategoryId)
+          .toSet();
+      final fundCategoryIds = sinkingFunds
+          .where((f) => f.budgetCategoryId != null)
+          .map((f) => f.budgetCategoryId!)
+          .toSet();
+      final excludedCategoryIds = {...debtCategoryIds, ...fundCategoryIds};
+
+      final templateCategoryIds = <int>{};
+      var touched = 0;
+      for (final s in snapshots) {
+        final categoryId = s['category_id'] as int;
+        final name = (s['category_name'] as String?) ?? 'Category $categoryId';
+        final limit = ((s['budget_limit'] ?? 0) as num).toDouble();
+        if (excludedCategoryIds.contains(categoryId)) continue;
+
+        templateCategoryIds.add(categoryId);
+        final existing = await txn.query(
+          'categories',
+          where: 'id = ?',
+          whereArgs: [categoryId],
+          limit: 1,
+        );
+        if (existing.isEmpty) {
+          await txn.insert('categories', {
+            'id': categoryId,
+            'name': name,
+            'budget_limit': limit,
+            'spent': 0,
+            'in_budget': 1,
+          });
+        } else {
+          await txn.update(
+            'categories',
+            {'name': name, 'budget_limit': limit, 'in_budget': 1},
+            where: 'id = ?',
+            whereArgs: [categoryId],
+          );
+        }
+        touched += 1;
+      }
+
+      if (templateCategoryIds.isNotEmpty) {
+        final allCategories = await txn.query('categories', columns: ['id']);
+        for (final row in allCategories) {
+          final id = row['id'] as int;
+          if (excludedCategoryIds.contains(id)) continue;
+          if (templateCategoryIds.contains(id)) continue;
+          await txn.update(
+            'categories',
+            {'in_budget': 0},
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        }
+      }
+      return touched;
+    });
+  }
+
+  Future<String> createLocalBackup() async {
+    final db = await instance.database;
+    final dbDir = await getDatabasesPath();
+    final backupDir = Directory(join(dbDir, 'backups'));
+    if (!await backupDir.exists()) {
+      await backupDir.create(recursive: true);
+    }
+
+    final tables = <String>[
+      'categories',
+      'transactions',
+      'income_sources',
+      'liabilities',
+      'extra_payments',
+      'closed_months',
+      'sinking_funds',
+      'settings',
+      'budget_snapshots',
+      'income_snapshots',
+      'spending_snapshots',
+      'liability_snapshots',
+      'fund_snapshots',
+      'category_carryovers',
+    ];
+    final payload = <String, dynamic>{
+      'schema_version': 14,
+      'created_at': DateTime.now().toIso8601String(),
+      'tables': <String, dynamic>{},
+    };
+    for (final table in tables) {
+      payload['tables'][table] = await db.query(table);
+    }
+
+    final stamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(':', '')
+        .replaceAll('.', '')
+        .replaceAll('-', '');
+    final filePath = join(backupDir.path, 'rminder_backup_$stamp.json');
+    final file = File(filePath);
+    await file.writeAsString(jsonEncode(payload));
+    return file.path;
+  }
+
+  Future<String?> getLatestBackupPath() async {
+    final dbDir = await getDatabasesPath();
+    final backupDir = Directory(join(dbDir, 'backups'));
+    if (!await backupDir.exists()) return null;
+    final files =
+        backupDir
+            .listSync()
+            .whereType<File>()
+            .where(
+              (f) =>
+                  basename(f.path).startsWith('rminder_backup_') &&
+                  f.path.endsWith('.json'),
+            )
+            .toList()
+          ..sort((a, b) => b.path.compareTo(a.path));
+    if (files.isEmpty) return null;
+    return files.first.path;
+  }
+
+  Future<void> restoreFromLocalBackup(String backupPath) async {
+    final db = await instance.database;
+    final file = File(backupPath);
+    if (!await file.exists()) {
+      throw ArgumentError('Backup file not found: $backupPath');
+    }
+    final content = await file.readAsString();
+    final decoded = jsonDecode(content);
+    if (decoded is! Map<String, dynamic>) {
+      throw ArgumentError('Invalid backup format.');
+    }
+    final tables = decoded['tables'];
+    if (tables is! Map<String, dynamic>) {
+      throw ArgumentError('Backup missing tables payload.');
+    }
+
+    final orderedTables = <String>[
+      'category_carryovers',
+      'fund_snapshots',
+      'liability_snapshots',
+      'spending_snapshots',
+      'income_snapshots',
+      'budget_snapshots',
+      'extra_payments',
+      'transactions',
+      'sinking_funds',
+      'liabilities',
+      'income_sources',
+      'closed_months',
+      'settings',
+      'categories',
+    ];
+
+    await db.transaction((txn) async {
+      for (final table in orderedTables) {
+        await txn.delete(table);
+      }
+      for (final table in orderedTables.reversed) {
+        final rows = tables[table];
+        if (rows is! List) continue;
+        for (final row in rows) {
+          if (row is! Map) continue;
+          final map = <String, Object?>{};
+          row.forEach((key, value) {
+            map[key.toString()] = value;
+          });
+          await txn.insert(
+            table,
+            map,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+      }
+    });
+  }
+
+  // ---------------- Income Snapshots ----------------
+  Future<void> saveIncomeSnapshotForPeriod(
+    DateTime periodStart,
+    List<models.IncomeSource> sources,
+  ) async {
+    final db = await instance.database;
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
     await db.transaction((txn) async {
       // Replace any existing rows for this period to avoid duplicates
-      await txn.delete('income_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+      await txn.delete(
+        'income_snapshots',
+        where: 'period_start = ?',
+        whereArgs: [ps],
+      );
       for (final s in sources) {
         await txn.insert('income_snapshots', {
           'period_start': ps,
@@ -1301,17 +2026,32 @@ class RMinderDatabase {
     });
   }
 
-  Future<List<Map<String, dynamic>>> getIncomeSnapshotsFor(DateTime periodStart) async {
+  Future<List<Map<String, dynamic>>> getIncomeSnapshotsFor(
+    DateTime periodStart,
+  ) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
-    return await db.query('income_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
+    return await db.query(
+      'income_snapshots',
+      where: 'period_start = ?',
+      whereArgs: [ps],
+    );
   }
 
   Future<double> getIncomeSnapshotSumFor(DateTime periodStart) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
     final rows = await db.rawQuery(
-      'SELECT SUM(amount) as total FROM income_snapshots WHERE period_start = ?', [ps],
+      'SELECT SUM(amount) as total FROM income_snapshots WHERE period_start = ?',
+      [ps],
     );
     final total = (rows.first['total'] ?? 0) as num;
     return total.toDouble();
@@ -1323,8 +2063,17 @@ class RMinderDatabase {
     final closed = await getClosedMonths();
     final incomes = await getIncomeSources();
     for (final period in closed) {
-      final ps = DateTime(period.year, period.month, period.day).toIso8601String();
-      final existing = await db.query('income_snapshots', where: 'period_start = ?', whereArgs: [ps], limit: 1);
+      final ps = DateTime(
+        period.year,
+        period.month,
+        period.day,
+      ).toIso8601String();
+      final existing = await db.query(
+        'income_snapshots',
+        where: 'period_start = ?',
+        whereArgs: [ps],
+        limit: 1,
+      );
       if (existing.isNotEmpty) continue;
       // Write one row per current income source
       await db.transaction((txn) async {
@@ -1346,30 +2095,43 @@ class RMinderDatabase {
     Map<int, double> spentByCategory,
   ) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
     await db.transaction((txn) async {
       for (final c in categories) {
         if (c.id == null) continue;
         final spent = (spentByCategory[c.id!] ?? 0.0);
-        await txn.insert(
-          'spending_snapshots',
-          {
-            'period_start': ps,
-            'category_id': c.id,
-            'category_name': c.name,
-            'spent': spent,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('spending_snapshots', {
+          'period_start': ps,
+          'category_id': c.id,
+          'category_name': c.name,
+          'spent': spent,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }
 
-  Future<Map<int, double>> getSpendingSnapshotMapFor(DateTime periodStart) async {
+  Future<Map<int, double>> getSpendingSnapshotMapFor(
+    DateTime periodStart,
+  ) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
-    final rows = await db.query('spending_snapshots', where: 'period_start = ?', whereArgs: [ps]);
-    return {for (final r in rows) (r['category_id'] as int): ((r['spent'] as num).toDouble())};
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
+    final rows = await db.query(
+      'spending_snapshots',
+      where: 'period_start = ?',
+      whereArgs: [ps],
+    );
+    return {
+      for (final r in rows)
+        (r['category_id'] as int): ((r['spent'] as num).toDouble()),
+    };
   }
 
   // ---------------- Liability Snapshots ----------------
@@ -1379,30 +2141,40 @@ class RMinderDatabase {
     Map<int, double> paidByLiabilityId,
   ) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
     await db.transaction((txn) async {
       for (final l in liabilities) {
         if (l.id == null) continue;
-        await txn.insert(
-          'liability_snapshots',
-          {
-            'period_start': ps,
-            'liability_id': l.id,
-            'liability_name': l.name,
-            'category_id': l.budgetCategoryId,
-            'planned': l.planned,
-            'paid': paidByLiabilityId[l.id!] ?? 0.0,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('liability_snapshots', {
+          'period_start': ps,
+          'liability_id': l.id,
+          'liability_name': l.name,
+          'category_id': l.budgetCategoryId,
+          'planned': l.planned,
+          'paid': paidByLiabilityId[l.id!] ?? 0.0,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }
 
-  Future<List<models.LiabilitySnapshot>> getLiabilitySnapshotsFor(DateTime periodStart) async {
+  Future<List<models.LiabilitySnapshot>> getLiabilitySnapshotsFor(
+    DateTime periodStart,
+  ) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
-    final rows = await db.query('liability_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
+    final rows = await db.query(
+      'liability_snapshots',
+      where: 'period_start = ?',
+      whereArgs: [ps],
+    );
     return rows.map((m) => models.LiabilitySnapshot.fromMap(m)).toList();
   }
 
@@ -1413,30 +2185,40 @@ class RMinderDatabase {
     Map<int, double> contributedByFundId,
   ) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
     await db.transaction((txn) async {
       for (final f in funds) {
         if (f.id == null) continue;
-        await txn.insert(
-          'fund_snapshots',
-          {
-            'period_start': ps,
-            'fund_id': f.id,
-            'fund_name': f.name,
-            'category_id': f.budgetCategoryId,
-            'monthly_contribution': f.monthlyContribution,
-            'contributed': contributedByFundId[f.id!] ?? 0.0,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('fund_snapshots', {
+          'period_start': ps,
+          'fund_id': f.id,
+          'fund_name': f.name,
+          'category_id': f.budgetCategoryId,
+          'monthly_contribution': f.monthlyContribution,
+          'contributed': contributedByFundId[f.id!] ?? 0.0,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }
 
-  Future<List<models.FundSnapshot>> getFundSnapshotsFor(DateTime periodStart) async {
+  Future<List<models.FundSnapshot>> getFundSnapshotsFor(
+    DateTime periodStart,
+  ) async {
     final db = await instance.database;
-    final ps = DateTime(periodStart.year, periodStart.month, periodStart.day).toIso8601String();
-    final rows = await db.query('fund_snapshots', where: 'period_start = ?', whereArgs: [ps]);
+    final ps = DateTime(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    ).toIso8601String();
+    final rows = await db.query(
+      'fund_snapshots',
+      where: 'period_start = ?',
+      whereArgs: [ps],
+    );
     return rows.map((m) => models.FundSnapshot.fromMap(m)).toList();
   }
 }
